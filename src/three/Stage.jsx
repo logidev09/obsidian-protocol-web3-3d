@@ -2,49 +2,65 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 
 /**
- * Pembungkus <Canvas> yang sadar-performa:
- * - hanya me-mount WebGL saat section masuk viewport (IntersectionObserver)
- * - frameloop otomatis berhenti saat section keluar layar
- * - dpr dibatasi supaya tidak berat di layar retina
- * - fallback statis kalau perangkat/preferensi tidak mendukung
+ * Pembungkus Canvas yang sadar viewport.
+ * - Canvas baru dipasang saat section mendekati layar (hemat memori GPU).
+ * - Render loop dimatikan saat section keluar layar → scroll tetap ringan.
+ * - Menghormati prefers-reduced-motion dengan menurunkan dpr.
  */
-export default function Stage({ children, className = '', camera, dpr = [1, 1.75] }) {
-  const host = useRef(null)
-  const [visible, setVisible] = useState(false)
-  const [reduced, setReduced] = useState(false)
+export default function Stage({
+  children,
+  camera = { position: [0, 0, 6], fov: 45 },
+  className = '',
+  eventPrefix
+}) {
+  const holder = useRef(null)
+  const [mounted, setMounted] = useState(false)
+  const [active, setActive] = useState(false)
 
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const apply = () => setReduced(mq.matches)
-    apply()
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [])
-
-  useEffect(() => {
-    const el = host.current
+    const el = holder.current
     if (!el) return
-    const io = new IntersectionObserver(
-      ([entry]) => setVisible(entry.isIntersecting),
-      { rootMargin: '220px 0px', threshold: 0.01 }
+
+    const preload = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setMounted(true)
+          preload.disconnect()
+        }
+      },
+      { rootMargin: '300px 0px' }
     )
-    io.observe(el)
-    return () => io.disconnect()
+
+    const activity = new IntersectionObserver(
+      ([entry]) => setActive(entry.isIntersecting),
+      { threshold: 0.02 }
+    )
+
+    preload.observe(el)
+    activity.observe(el)
+    return () => {
+      preload.disconnect()
+      activity.disconnect()
+    }
   }, [])
+
+  const reduced =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
   return (
-    <div ref={host} className={`stage ${className}`}>
-      {visible ? (
+    <div ref={holder} className={`stage ${className}`}>
+      {mounted && (
         <Canvas
-          dpr={dpr}
-          frameloop={reduced ? 'demand' : 'always'}
+          frameloop={active ? 'always' : 'never'}
+          dpr={reduced ? 1 : [1, 1.75]}
+          camera={camera}
+          eventPrefix={eventPrefix}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-          camera={{ position: [0, 0, 6], fov: 45, ...camera }}
+          style={{ touchAction: 'pan-y' }}
         >
           <Suspense fallback={null}>{children}</Suspense>
         </Canvas>
-      ) : (
-        <div className="stage-placeholder" aria-hidden="true" />
       )}
     </div>
   )

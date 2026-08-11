@@ -1,91 +1,112 @@
 import { useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { PALETTE } from '../geo'
 
 /**
- * Ledger: grid balok yang naik-turun mengikuti kursor.
- * Digambar dengan satu InstancedMesh (900 instance, 1 draw call) supaya
- * tetap ringan. Tinggi tiap balok = riak sinus + dorongan dari jarak kursor.
+ * Ledger grid: bidang blok ter-instanced yang "terangkat" mengikuti pointer.
+ * Interaksi langsung ke posisi kursor di atas plane — tanpa drag,
+ * jadi aman dilewati saat scroll.
  */
 
-const GRID = 30
-const SPACING = 0.26
-const COUNT = GRID * GRID
+const COLS = 26
+const ROWS = 16
+const GAP = 0.34
+const COUNT = COLS * ROWS
 
 export default function LedgerGrid() {
   const mesh = useRef()
-  const { viewport } = useThree()
-  const pointer = useRef(new THREE.Vector2(0, 0))
+  const pointer = useRef(new THREE.Vector3(0, 0, 999))
   const dummy = useMemo(() => new THREE.Object3D(), [])
-  const heights = useMemo(() => new Float32Array(COUNT), [])
+  const color = useMemo(() => new THREE.Color(), [])
+  const base = useMemo(() => new THREE.Color(PALETTE.slate), [])
+  const hot = useMemo(() => new THREE.Color(PALETTE.teal), [])
 
-  const offsets = useMemo(() => {
-    const arr = []
-    const half = (GRID - 1) / 2
-    for (let x = 0; x < GRID; x++) {
-      for (let z = 0; z < GRID; z++) {
-        arr.push([(x - half) * SPACING, (z - half) * SPACING])
+  const cells = useMemo(() => {
+    const list = []
+    for (let x = 0; x < COLS; x++) {
+      for (let z = 0; z < ROWS; z++) {
+        list.push({
+          x: (x - (COLS - 1) / 2) * GAP,
+          z: (z - (ROWS - 1) / 2) * GAP,
+          phase: (x + z) * 0.35
+        })
       }
     }
-    return arr
+    return list
   }, [])
 
+  const heights = useRef(new Float32Array(COUNT))
+
   useFrame((state, delta) => {
-    const m = mesh.current
-    if (!m) return
+    const inst = mesh.current
+    if (!inst) return
     const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
-
-    // pointer dalam satuan dunia
-    pointer.current.set(
-      (state.pointer.x * viewport.width) / 2,
-      (state.pointer.y * viewport.height) / 2
-    )
-
-    const color = new THREE.Color()
-    const base = new THREE.Color(PALETTE.slate)
-    const hot = new THREE.Color(PALETTE.teal)
+    const p = pointer.current
 
     for (let i = 0; i < COUNT; i++) {
-      const [x, z] = offsets[i]
-      const wave = Math.sin(x * 1.6 + t * 0.9) * Math.cos(z * 1.6 + t * 0.6) * 0.16
-      const dist = Math.hypot(x - pointer.current.x, z + pointer.current.y)
-      const push = Math.max(0, 1 - dist / 1.6) ** 2 * 0.85
-      const target = 0.08 + wave + push
+      const c = cells[i]
+      const dx = c.x - p.x
+      const dz = c.z - p.z
+      const dist = Math.sqrt(dx * dx + dz * dz)
 
-      heights[i] = THREE.MathUtils.damp(heights[i], target, 7, dt)
-      const h = Math.max(heights[i], 0.02)
+      const wave = Math.sin(t * 1.1 - c.phase) * 0.055 + 0.075
+      const influence = Math.max(0, 1 - dist / 2.4)
+      const target = wave + influence * influence * 1.05
 
-      dummy.position.set(x, h / 2, z)
-      dummy.scale.set(1, h / 0.2, 1)
+      heights.current[i] = THREE.MathUtils.damp(heights.current[i], target, 7, dt)
+      const h = heights.current[i]
+
+      dummy.position.set(c.x, h / 2, c.z)
+      dummy.scale.set(1, Math.max(h, 0.02) / 0.1, 1)
       dummy.updateMatrix()
-      m.setMatrixAt(i, dummy.matrix)
+      inst.setMatrixAt(i, dummy.matrix)
 
-      color.copy(base).lerp(hot, THREE.MathUtils.clamp((h - 0.08) / 0.8, 0, 1))
-      m.setColorAt(i, color)
+      color.copy(base).lerp(hot, Math.min(1, influence * 1.3))
+      inst.setColorAt(i, color)
     }
 
-    m.instanceMatrix.needsUpdate = true
-    if (m.instanceColor) m.instanceColor.needsUpdate = true
+    inst.instanceMatrix.needsUpdate = true
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true
   })
 
   return (
     <>
       <ambientLight intensity={0.5} />
-      <directionalLight position={[3, 6, 2]} intensity={1} color={PALETTE.mist} />
-      <pointLight position={[0, 2, 2]} intensity={8} color={PALETTE.indigo} distance={12} />
+      <directionalLight position={[4, 6, 3]} intensity={1} color={PALETTE.mist} />
+      <pointLight position={[0, 3, 0]} intensity={14} color={PALETTE.indigo} distance={12} />
 
-      <group rotation={[-0.62, 0.42, 0]} position={[0, -0.7, 0]}>
-        <instancedMesh ref={mesh} args={[null, null, COUNT]}>
-          <boxGeometry args={[0.14, 0.2, 0.14]} />
-          <meshStandardMaterial roughness={0.4} metalness={0.75} flatShading />
+      <group rotation={[0.15, 0.5, 0]}>
+        {/* plane tak terlihat untuk membaca posisi kursor di ruang grid */}
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0, 0]}
+          onPointerMove={(e) => {
+            e.stopPropagation()
+            pointer.current.set(e.point.x, 0, e.point.z)
+          }}
+          onPointerOut={() => pointer.current.set(0, 0, 999)}
+        >
+          <planeGeometry args={[COLS * GAP + 2, ROWS * GAP + 2]} />
+          <meshBasicMaterial visible={false} />
+        </mesh>
+
+        <instancedMesh ref={mesh} args={[undefined, undefined, COUNT]}>
+          <boxGeometry args={[0.2, 0.1, 0.2]} />
+          <meshStandardMaterial
+            roughness={0.4}
+            metalness={0.75}
+            emissive={PALETTE.indigo}
+            emissiveIntensity={0.16}
+            flatShading
+          />
         </instancedMesh>
 
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
-          <planeGeometry args={[GRID * SPACING, GRID * SPACING]} />
-          <meshBasicMaterial color={PALETTE.void} transparent opacity={0.55} />
-        </mesh>
+        <gridHelper
+          args={[COLS * GAP, COLS, PALETTE.steel, PALETTE.slate]}
+          position={[0, -0.02, 0]}
+        />
       </group>
     </>
   )
