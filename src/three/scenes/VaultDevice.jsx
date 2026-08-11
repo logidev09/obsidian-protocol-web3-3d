@@ -5,148 +5,114 @@ import DragGroup from '../DragGroup'
 import { PALETTE, roundedBoxGeometry } from '../geo'
 
 /**
- * Produk: modul vault fisik yang tersusun dari beberapa lapis.
- * - Drag untuk memutar perangkat.
- * - Hover salah satu lapis → lapis itu terangkat & menyala (exploded view parsial).
- * - Klik → kunci lapis, seluruh modul memisah untuk memperlihatkan susunannya.
+ * Perangkat vault — tampilan produk yang bisa "dibongkar".
+ * Empat lapisan: sasis, papan logika, elemen aman, dan panel kaca.
+ * Klik/tap objek → lapisan memisah (exploded view) dan label muncul.
+ * Drag → memutar perangkat.
  */
 
 const LAYERS = [
-  { key: 'shell', label: 'Titanium shell', h: 0.2, color: PALETTE.slate, accent: PALETTE.steel },
-  { key: 'secure', label: 'Secure element', h: 0.14, color: PALETTE.steel, accent: PALETTE.teal },
-  { key: 'logic', label: 'Signing logic', h: 0.16, color: PALETTE.slate, accent: PALETTE.indigo },
-  { key: 'power', label: 'Isolated power', h: 0.13, color: PALETTE.steel, accent: PALETTE.amber },
-  { key: 'base', label: 'Tamper mesh', h: 0.22, color: PALETTE.slate, accent: PALETTE.teal }
+  { key: 'chassis', label: '01 · Titanium chassis', w: 2.4, h: 0.16, d: 1.5, y: -0.42, color: PALETTE.steel, spread: -0.75 },
+  { key: 'logic', label: '02 · Logic board', w: 2.1, h: 0.1, d: 1.25, y: -0.14, color: PALETTE.slate, spread: -0.25 },
+  { key: 'secure', label: '03 · Secure element', w: 0.72, h: 0.14, d: 0.72, y: 0.12, color: PALETTE.teal, spread: 0.3 },
+  { key: 'glass', label: '04 · Sapphire panel', w: 2.35, h: 0.07, d: 1.45, y: 0.42, color: PALETTE.mist, spread: 0.95 }
 ]
 
-function Layer({ layer, index, offsetY, hovered, locked, onHover, onOut, onClick }) {
+function Layer({ layer, exploded, hovered, onHover, onOut, onClick }) {
   const ref = useRef()
   const geometry = useMemo(
-    () => roundedBoxGeometry(2.2, layer.h, 1.4, 0.16),
-    [layer.h]
+    () => roundedBoxGeometry(layer.w, layer.h, layer.d, 0.09),
+    [layer.w, layer.h, layer.d]
   )
-  const edges = useMemo(() => new THREE.EdgesGeometry(geometry, 30), [geometry])
-
-  const isActive = hovered === index || locked === index
-  const anyLocked = locked !== null
 
   useFrame((state, delta) => {
     const m = ref.current
     if (!m) return
     const dt = Math.min(delta, 0.05)
+    const t = state.clock.elapsedTime
 
-    const spread = anyLocked ? 0.34 : 0
-    const lift = isActive ? 0.2 : 0
-    const targetY = offsetY + index * spread * -1 + lift
+    const targetY = layer.y + (exploded ? layer.spread : 0)
+    m.position.y = THREE.MathUtils.damp(m.position.y, targetY, 6, dt)
 
-    m.position.y = THREE.MathUtils.damp(m.position.y, targetY, 7, dt)
-    m.position.x = THREE.MathUtils.damp(m.position.x, isActive ? 0.12 : 0, 7, dt)
+    const lift = hovered ? 0.06 : 0
+    m.position.z = THREE.MathUtils.damp(m.position.z, lift, 8, dt)
 
-    const mat = m.children[0].material
-    mat.emissiveIntensity = THREE.MathUtils.damp(
-      mat.emissiveIntensity,
-      isActive ? 0.85 : 0.12,
-      7,
-      dt
-    )
+    if (layer.key === 'secure') {
+      m.material.emissiveIntensity = 0.5 + Math.sin(t * 2.2) * 0.25 + (hovered ? 0.5 : 0)
+      m.rotation.y = THREE.MathUtils.damp(m.rotation.y, exploded ? t * 0.4 : 0, 3, dt)
+    }
   })
 
+  const isGlass = layer.key === 'glass'
+
   return (
-    <group
+    <mesh
       ref={ref}
-      position={[0, offsetY, 0]}
+      geometry={geometry}
+      position={[0, layer.y, 0]}
       onPointerOver={(e) => {
         e.stopPropagation()
-        onHover(index)
+        onHover(layer.key)
       }}
-      onPointerOut={(e) => {
-        e.stopPropagation()
-        onOut(index)
-      }}
+      onPointerOut={() => onOut(layer.key)}
       onClick={(e) => {
         e.stopPropagation()
-        onClick(index)
+        onClick()
       }}
     >
-      <mesh geometry={geometry} castShadow>
-        <meshStandardMaterial
-          color={layer.color}
-          emissive={layer.accent}
-          emissiveIntensity={0.12}
-          roughness={0.38}
-          metalness={0.88}
-          flatShading
-        />
-      </mesh>
-      <lineSegments geometry={edges}>
-        <lineBasicMaterial
-          color={isActive ? layer.accent : PALETTE.steel}
-          transparent
-          opacity={isActive ? 0.85 : 0.3}
-        />
-      </lineSegments>
-    </group>
+      <meshStandardMaterial
+        color={layer.color}
+        metalness={isGlass ? 0.2 : 0.9}
+        roughness={isGlass ? 0.08 : 0.32}
+        transparent={isGlass}
+        opacity={isGlass ? 0.35 : 1}
+        emissive={layer.key === 'secure' ? PALETTE.teal : PALETTE.void}
+        emissiveIntensity={layer.key === 'secure' ? 0.6 : 0}
+        flatShading={!isGlass}
+      />
+    </mesh>
   )
 }
 
-export default function VaultDevice({ onLayerChange }) {
+export default function VaultDevice({ onExplodeChange }) {
+  const [exploded, setExploded] = useState(false)
   const [hovered, setHovered] = useState(null)
-  const [locked, setLocked] = useState(null)
 
-  const totalHeight = LAYERS.reduce((sum, l) => sum + l.h, 0)
-  let cursor = totalHeight / 2
-  const positions = LAYERS.map((l) => {
-    const y = cursor - l.h / 2
-    cursor -= l.h
-    return y
-  })
-
-  const report = (index) => {
-    onLayerChange?.(index === null ? null : LAYERS[index])
+  const toggle = () => {
+    setExploded((v) => {
+      const next = !v
+      onExplodeChange?.(next)
+      return next
+    })
   }
 
   return (
     <>
       <ambientLight intensity={0.5} />
-      <directionalLight position={[4, 6, 4]} intensity={1.2} color={PALETTE.mist} />
-      <directionalLight position={[-4, -3, -2]} intensity={0.45} color={PALETTE.indigo} />
-      <spotLight
-        position={[0, 5, 2]}
-        angle={0.5}
-        penumbra={0.9}
-        intensity={18}
-        color={PALETTE.teal}
-      />
+      <directionalLight position={[3, 6, 4]} intensity={1.2} color={PALETTE.mist} />
+      <directionalLight position={[-4, 2, -3]} intensity={0.5} color={PALETTE.indigo} />
+      <pointLight position={[0, 1.5, 2.5]} intensity={7} color={PALETTE.teal} distance={10} />
 
-      <DragGroup autoSpin={0.35} parallax={0.5} scale={1.25}>
-        {LAYERS.map((layer, i) => (
+      <DragGroup autoSpin={0.35} parallax={0.5} scale={1.1}>
+        {LAYERS.map((layer) => (
           <Layer
             key={layer.key}
             layer={layer}
-            index={i}
-            offsetY={positions[i]}
-            hovered={hovered}
-            locked={locked}
-            onHover={(idx) => {
-              setHovered(idx)
-              report(idx)
-            }}
-            onOut={(idx) => {
-              setHovered((cur) => (cur === idx ? null : cur))
-              report(locked)
-            }}
-            onClick={(idx) => {
-              const next = locked === idx ? null : idx
-              setLocked(next)
-              report(next ?? idx)
-            }}
+            exploded={exploded}
+            hovered={hovered === layer.key}
+            onHover={setHovered}
+            onOut={(k) => setHovered((cur) => (cur === k ? null : cur))}
+            onClick={toggle}
           />
         ))}
 
-        {/* cincin dasar sebagai landasan visual */}
-        <mesh position={[0, -totalHeight / 2 - 0.12, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[1.5, 1.62, 6]} />
-          <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.35} side={THREE.DoubleSide} />
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.35, 0]}>
+          <ringGeometry args={[1.55, 1.62, 6]} />
+          <meshBasicMaterial color={PALETTE.amber} transparent opacity={0.4} />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, Math.PI / 6]} position={[0, -1.36, 0]}>
+          <ringGeometry args={[1.9, 1.93, 6]} />
+          <meshBasicMaterial color={PALETTE.steel} transparent opacity={0.25} />
         </mesh>
       </DragGroup>
     </>

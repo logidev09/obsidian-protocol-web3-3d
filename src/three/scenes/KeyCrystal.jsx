@@ -5,155 +5,122 @@ import DragGroup from '../DragGroup'
 import { PALETTE, seededRandom } from '../geo'
 
 /**
- * Hero: inti kunci berbentuk kristal ikosahedron.
- * - Drag untuk memutar (inersia).
- * - Hover membuka cangkang luar dan menyalakan inti.
- * - Serpihan orbit bergerak pelan supaya tidak mengganggu keterbacaan teks.
+ * Kristal kunci — objek hero.
+ * Inti icosahedron low-poly, cangkang wireframe yang berputar berlawanan arah,
+ * dan serpihan orbit. Hover memicu "charge": emissive naik, cangkang mengembang.
+ * Drag memutar seluruh rakitan dengan inersia.
  */
+export default function KeyCrystal({ intensity = 1 }) {
+  const core = useRef()
+  const shell = useRef()
+  const shards = useRef()
+  const [hovered, setHovered] = useState(false)
+  const charge = useRef(0)
 
-function Shards({ open }) {
-  const group = useRef()
-
-  const shards = useMemo(() => {
+  const shardData = useMemo(() => {
     const rand = seededRandom(7)
-    return Array.from({ length: 18 }, () => {
-      const radius = 1.9 + rand() * 1.1
-      const phi = Math.acos(2 * rand() - 1)
-      const theta = rand() * Math.PI * 2
-      return {
-        base: new THREE.Vector3(
-          radius * Math.sin(phi) * Math.cos(theta),
-          radius * Math.cos(phi) * 0.65,
-          radius * Math.sin(phi) * Math.sin(theta)
-        ),
-        size: 0.06 + rand() * 0.13,
-        speed: 0.15 + rand() * 0.35,
-        tilt: [rand() * Math.PI, rand() * Math.PI, rand() * Math.PI]
-      }
-    })
+    return Array.from({ length: 14 }, (_, i) => ({
+      radius: 2.35 + rand() * 0.9,
+      speed: 0.12 + rand() * 0.22,
+      offset: rand() * Math.PI * 2,
+      tilt: (rand() - 0.5) * 1.5,
+      size: 0.06 + rand() * 0.11,
+      spin: (rand() - 0.5) * 1.4,
+      key: i
+    }))
   }, [])
 
-  useFrame((state, delta) => {
-    const g = group.current
-    if (!g) return
-    const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
-    g.children.forEach((child, i) => {
-      const s = shards[i]
-      const spread = open ? 1.16 : 1
-      child.position.x = THREE.MathUtils.damp(child.position.x, s.base.x * spread, 3, dt)
-      child.position.z = THREE.MathUtils.damp(child.position.z, s.base.z * spread, 3, dt)
-      child.position.y = s.base.y * spread + Math.sin(t * s.speed + i) * 0.12
-      child.rotation.x += dt * s.speed * 0.4
-      child.rotation.y += dt * s.speed * 0.3
-    })
-  })
-
-  return (
-    <group ref={group}>
-      {shards.map((s, i) => (
-        <mesh key={i} position={s.base} rotation={s.tilt}>
-          <tetrahedronGeometry args={[s.size, 0]} />
-          <meshStandardMaterial
-            color={i % 4 === 0 ? PALETTE.amber : PALETTE.steel}
-            emissive={i % 4 === 0 ? PALETTE.amber : PALETTE.indigo}
-            emissiveIntensity={0.25}
-            roughness={0.35}
-            metalness={0.85}
-            flatShading
-          />
-        </mesh>
-      ))}
-    </group>
-  )
-}
-
-export default function KeyCrystal() {
-  const [hovered, setHovered] = useState(false)
-  const shell = useRef()
-  const core = useRef()
-  const wire = useRef()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
 
-    if (shell.current) {
-      const s = THREE.MathUtils.damp(shell.current.scale.x, hovered ? 1.28 : 1.06, 4, dt)
-      shell.current.scale.setScalar(s)
-      shell.current.material.opacity = THREE.MathUtils.damp(
-        shell.current.material.opacity,
-        hovered ? 0.1 : 0.22,
-        4,
-        dt
-      )
-      shell.current.rotation.y -= dt * 0.15
-    }
+    charge.current = THREE.MathUtils.damp(charge.current, hovered ? 1 : 0, 5, dt)
+    const c = charge.current
 
     if (core.current) {
-      core.current.rotation.x += dt * 0.18
-      const pulse = 0.9 + Math.sin(t * 1.4) * 0.06
-      core.current.material.emissiveIntensity = THREE.MathUtils.damp(
-        core.current.material.emissiveIntensity,
-        (hovered ? 1.5 : 0.55) * pulse,
-        4,
-        dt
-      )
+      core.current.rotation.y += dt * 0.18
+      core.current.rotation.x = Math.sin(t * 0.35) * 0.12
+      const breathe = 1 + Math.sin(t * 0.9) * 0.02
+      core.current.scale.setScalar(breathe * (1 + c * 0.06))
+      core.current.material.emissiveIntensity = (0.22 + c * 0.85) * intensity
     }
 
-    if (wire.current) {
-      wire.current.rotation.y += dt * 0.22
-      wire.current.rotation.z -= dt * 0.08
+    if (shell.current) {
+      shell.current.rotation.y -= dt * 0.26
+      shell.current.rotation.z += dt * 0.07
+      shell.current.scale.setScalar(1 + c * 0.13 + Math.sin(t * 1.2) * 0.012)
+      shell.current.material.opacity = 0.16 + c * 0.3
+    }
+
+    if (shards.current) {
+      shardData.forEach((s, i) => {
+        const a = t * s.speed + s.offset
+        dummy.position.set(
+          Math.cos(a) * s.radius,
+          Math.sin(a * 1.3 + s.tilt) * 0.85,
+          Math.sin(a) * s.radius
+        )
+        const pull = 1 - c * 0.16
+        dummy.position.multiplyScalar(pull)
+        dummy.rotation.set(a * s.spin, a * 0.8, a * 0.4)
+        dummy.scale.setScalar(s.size * (1 + c * 0.5))
+        dummy.updateMatrix()
+        shards.current.setMatrixAt(i, dummy.matrix)
+      })
+      shards.current.instanceMatrix.needsUpdate = true
     }
   })
 
   return (
     <>
       <ambientLight intensity={0.45} />
-      <directionalLight position={[4, 5, 3]} intensity={1.1} color={PALETTE.mist} />
-      <directionalLight position={[-5, -2, -3]} intensity={0.5} color={PALETTE.indigo} />
-      <pointLight position={[0, 0, 2.5]} intensity={9} color={PALETTE.teal} distance={9} />
+      <directionalLight position={[4, 5, 4]} intensity={1.1} color={PALETTE.mist} />
+      <pointLight position={[-4, -2, -2]} intensity={9} color={PALETTE.indigo} distance={14} />
+      <pointLight position={[2, 1, 4]} intensity={6} color={PALETTE.teal} distance={12} />
 
-      <DragGroup autoSpin={1} parallax={0.7}>
-        <group
-          onPointerOver={(e) => { e.stopPropagation(); setHovered(true) }}
-          onPointerOut={(e) => { e.stopPropagation(); setHovered(false) }}
+      <DragGroup autoSpin={0.5} parallax={0.9}>
+        <mesh
+          ref={core}
+          onPointerOver={(e) => {
+            e.stopPropagation()
+            setHovered(true)
+          }}
+          onPointerOut={() => setHovered(false)}
         >
-          {/* inti */}
-          <mesh ref={core}>
-            <icosahedronGeometry args={[0.92, 0]} />
-            <meshStandardMaterial
-              color={PALETTE.slate}
-              emissive={PALETTE.teal}
-              emissiveIntensity={0.55}
-              roughness={0.22}
-              metalness={0.95}
-              flatShading
-            />
-          </mesh>
+          <icosahedronGeometry args={[1.35, 0]} />
+          <meshStandardMaterial
+            color={PALETTE.slate}
+            emissive={PALETTE.teal}
+            emissiveIntensity={0.22}
+            metalness={0.92}
+            roughness={0.22}
+            flatShading
+          />
+        </mesh>
 
-          {/* rangka kawat */}
-          <mesh ref={wire} scale={1.42}>
-            <icosahedronGeometry args={[0.92, 1]} />
-            <meshBasicMaterial color={PALETTE.steel} wireframe transparent opacity={0.3} />
-          </mesh>
+        <mesh ref={shell}>
+          <icosahedronGeometry args={[1.95, 1]} />
+          <meshBasicMaterial color={PALETTE.teal} wireframe transparent opacity={0.16} />
+        </mesh>
 
-          {/* cangkang luar */}
-          <mesh ref={shell} scale={1.06}>
-            <icosahedronGeometry args={[1.35, 0]} />
-            <meshStandardMaterial
-              color={PALETTE.indigo}
-              transparent
-              opacity={0.22}
-              roughness={0.1}
-              metalness={0.6}
-              side={THREE.DoubleSide}
-              flatShading
-            />
-          </mesh>
-        </group>
+        <mesh rotation={[Math.PI / 3, 0, 0.4]}>
+          <torusGeometry args={[2.5, 0.012, 3, 64]} />
+          <meshBasicMaterial color={PALETTE.amber} transparent opacity={0.35} />
+        </mesh>
 
-        <Shards open={hovered} />
+        <instancedMesh ref={shards} args={[undefined, undefined, shardData.length]}>
+          <tetrahedronGeometry args={[1, 0]} />
+          <meshStandardMaterial
+            color={PALETTE.mist}
+            emissive={PALETTE.amber}
+            emissiveIntensity={0.25}
+            metalness={0.8}
+            roughness={0.35}
+            flatShading
+          />
+        </instancedMesh>
       </DragGroup>
     </>
   )

@@ -1,54 +1,29 @@
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
+import { getPerfProfile } from './geo'
+
+const perf = getPerfProfile()
 
 /**
- * Pembungkus <Canvas> yang dipakai semua scene.
+ * Pembungkus Canvas standar untuk semua section.
  *
- * Tiga hal yang menjaga scroll tetap nyaman:
- * 1. frameloop="demand" -> canvas berhenti render saat keluar viewport.
- * 2. IntersectionObserver -> scene hanya mount saat terlihat.
- * 3. dpr dibatasi 1.6 -> GPU tidak jenuh di layar retina.
+ * Dua hal penting untuk kenyamanan scroll:
+ * 1. `frameloop="demand"` tidak dipakai (kita butuh animasi), tapi setiap
+ *    canvas hanya di-mount saat section-nya terlihat (lihat useInView).
+ * 2. `touch-action: pan-y` di style, sehingga di mobile jari tetap bisa
+ *    men-scroll halaman walaupun menyentuh area 3D.
  */
-export default function SceneCanvas({
-  children,
-  camera = { position: [0, 0, 6], fov: 42 },
-  className = ''
-}) {
-  const holder = useRef()
-  const [visible, setVisible] = useState(false)
-  const [reduced, setReduced] = useState(false)
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    setReduced(mq.matches)
-    const onChange = (e) => setReduced(e.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
-
-  useEffect(() => {
-    const el = holder.current
-    if (!el) return
-    const io = new IntersectionObserver(
-      ([entry]) => setVisible(entry.isIntersecting),
-      { rootMargin: '200px 0px' }
-    )
-    io.observe(el)
-    return () => io.disconnect()
-  }, [])
-
+export default function SceneCanvas({ children, camera, className = '', ...rest }) {
   return (
-    <div ref={holder} className={`scene ${className}`}>
-      {visible && (
-        <Canvas
-          camera={camera}
-          dpr={[1, 1.6]}
-          frameloop={reduced ? 'demand' : 'always'}
-          gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-        >
-          <Suspense fallback={null}>{children}</Suspense>
-        </Canvas>
-      )}
-    </div>
+    <Canvas
+      className={`scene-canvas ${className}`}
+      dpr={perf.dpr}
+      gl={{ antialias: !perf.low, alpha: true, powerPreference: 'high-performance' }}
+      camera={{ fov: 42, position: [0, 0, 7], ...camera }}
+      style={{ touchAction: 'pan-y' }}
+      {...rest}
+    >
+      <Suspense fallback={null}>{children}</Suspense>
+    </Canvas>
   )
 }
