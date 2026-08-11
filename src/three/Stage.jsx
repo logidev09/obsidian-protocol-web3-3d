@@ -1,32 +1,31 @@
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { getPerfProfile } from './geo'
+import { PALETTE, getPerfProfile } from './geo'
 
 /**
- * Wadah canvas hemat resource.
- * - Canvas baru di-mount ketika section mendekati viewport.
- * - Render loop dimatikan saat section keluar layar atau tab tidak aktif,
- *   sehingga scroll tetap ringan meski ada 4 scene di satu halaman.
+ * Pembungkus <Canvas>:
+ * - hanya di-mount saat mendekati viewport (hemat memori GPU),
+ * - render loop dihentikan saat section keluar layar (scroll tetap ringan),
+ * - touch-action pan-y supaya scroll di ponsel tidak tersandera canvas.
  */
 export default function Stage({
   children,
-  camera = { position: [0, 0, 6], fov: 38 },
-  className = '',
-  onPointerMissed
+  camera = { position: [0, 0, 7], fov: 42 },
+  hint,
+  className = ''
 }) {
-  const holder = useRef(null)
+  const host = useRef(null)
   const [mounted, setMounted] = useState(false)
   const [visible, setVisible] = useState(false)
-  const [awake, setAwake] = useState(true)
-  const perf = useRef(getPerfProfile()).current
+  const perf = useMemo(() => getPerfProfile(), [])
 
   useEffect(() => {
-    const el = holder.current
+    const el = host.current
     if (!el) return
     const io = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) setMounted(true)
         setVisible(entry.isIntersecting)
+        if (entry.isIntersecting) setMounted(true)
       },
       { rootMargin: '240px 0px' }
     )
@@ -34,31 +33,25 @@ export default function Stage({
     return () => io.disconnect()
   }, [])
 
-  useEffect(() => {
-    const onVis = () => setAwake(!document.hidden)
-    document.addEventListener('visibilitychange', onVis)
-    return () => document.removeEventListener('visibilitychange', onVis)
-  }, [])
-
   return (
-    <div ref={holder} className={`stage ${className}`}>
+    <div className={`stage ${className}`} ref={host}>
       {mounted && (
         <Canvas
           dpr={perf.dpr}
+          frameloop={visible ? 'always' : 'demand'}
           camera={camera}
-          frameloop={visible && awake ? 'always' : 'never'}
-          onPointerMissed={onPointerMissed}
+          style={{ touchAction: 'pan-y' }}
           gl={{
             antialias: !perf.low,
             alpha: true,
-            powerPreference: 'high-performance',
-            stencil: false,
-            depth: true
+            powerPreference: 'high-performance'
           }}
+          onCreated={({ gl }) => gl.setClearColor(PALETTE.base, 0)}
         >
           <Suspense fallback={null}>{children}</Suspense>
         </Canvas>
       )}
+      {hint && <span className="stage__hint">{hint}</span>}
     </div>
   )
 }

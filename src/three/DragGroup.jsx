@@ -1,93 +1,81 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
+import { lerp } from './geo'
 
 /**
- * Grup yang bisa diputar dengan drag mouse / sentuhan.
- *
- * Catatan kenyamanan scroll: handler pointermove dipasang di window hanya
- * selama drag berlangsung, dan tidak pernah memanggil preventDefault. Di
- * layar sentuh, canvas memakai `touch-action: pan-y` sehingga gestur scroll
- * vertikal tetap milik halaman — rotasi hanya mengikuti gerak horizontal.
+ * Grup yang bisa diputar dengan drag mouse / jari, lengkap dengan inersia.
+ * Drag vertikal dibatasi agar halaman tetap nyaman di-scroll di layar sentuh
+ * (canvas memakai touch-action: pan-y, jadi swipe atas-bawah tetap men-scroll).
  */
 export default function DragGroup({
   children,
   autoSpin = 0.15,
-  damping = 0.94,
-  maxPitch = 0.55,
-  recenter = true,
-  onGrabChange,
-  ...props
+  tiltLimit = 0.6,
+  sensitivity = 0.005
 }) {
   const group = useRef()
-  const last = useRef(null)
+  const drag = useRef({ active: false, x: 0, y: 0 })
   const velocity = useRef({ x: 0, y: 0 })
-  const [dragging, setDragging] = useState(false)
+  const tilt = useRef(0)
   const { gl } = useThree()
 
-  useFrame((_, delta) => {
-    const g = group.current
-    if (!g) return
+  const setCursor = (value) => {
+    gl.domElement.style.cursor = value
+  }
+
+  const onPointerDown = (e) => {
+    e.stopPropagation()
+    drag.current = { active: true, x: e.clientX, y: e.clientY }
+    velocity.current = { x: 0, y: 0 }
+    setCursor('grabbing')
+    e.target.setPointerCapture?.(e.pointerId)
+  }
+
+  const onPointerMove = (e) => {
+    if (!drag.current.active) return
+    const dx = e.clientX - drag.current.x
+    const dy = e.clientY - drag.current.y
+    drag.current.x = e.clientX
+    drag.current.y = e.clientY
+    velocity.current.x = dx * sensitivity
+    velocity.current.y = dy * sensitivity * 0.6
+  }
+
+  const release = (e) => {
+    if (!drag.current.active) return
+    drag.current.active = false
+    setCursor('grab')
+    e?.target?.releasePointerCapture?.(e.pointerId)
+  }
+
+  useFrame((state, delta) => {
+    if (!group.current) return
     const step = Math.min(delta, 0.05)
 
-    if (!dragging) {
-      g.rotation.y += velocity.current.x + autoSpin * step
-      g.rotation.x += velocity.current.y
-      velocity.current.x *= damping
-      velocity.current.y *= damping
-      if (recenter) g.rotation.x += (0 - g.rotation.x) * 0.03
+    if (drag.current.active) {
+      group.current.rotation.y += velocity.current.x
+      tilt.current += velocity.current.y
+    } else {
+      velocity.current.x *= 0.94
+      velocity.current.y *= 0.94
+      group.current.rotation.y += velocity.current.x + autoSpin * step
+      tilt.current += velocity.current.y
+      tilt.current = lerp(tilt.current, 0, step * 1.2)
     }
 
-    g.rotation.x = Math.max(-maxPitch, Math.min(maxPitch, g.rotation.x))
+    tilt.current = Math.max(-tiltLimit, Math.min(tiltLimit, tilt.current))
+    group.current.rotation.x = tilt.current
   })
-
-  useEffect(() => {
-    if (!dragging) return
-
-    const move = (e) => {
-      const g = group.current
-      if (!g || !last.current) return
-      const dx = (e.clientX - last.current.x) / 230
-      const dy = (e.clientY - last.current.y) / 280
-      g.rotation.y += dx
-      g.rotation.x += dy
-      velocity.current = { x: dx * 0.55, y: dy * 0.55 }
-      last.current = { x: e.clientX, y: e.clientY }
-    }
-
-    const end = () => {
-      last.current = null
-      setDragging(false)
-      gl.domElement.style.cursor = 'grab'
-      onGrabChange?.(false)
-    }
-
-    window.addEventListener('pointermove', move, { passive: true })
-    window.addEventListener('pointerup', end, { passive: true })
-    window.addEventListener('pointercancel', end, { passive: true })
-    return () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
-    }
-  }, [dragging, gl, onGrabChange])
 
   return (
     <group
       ref={group}
-      {...props}
-      onPointerDown={(e) => {
-        e.stopPropagation()
-        last.current = { x: e.clientX, y: e.clientY }
-        setDragging(true)
-        gl.domElement.style.cursor = 'grabbing'
-        onGrabChange?.(true)
-      }}
-      onPointerOver={() => {
-        if (!dragging) gl.domElement.style.cursor = 'grab'
-      }}
-      onPointerOut={() => {
-        if (!dragging) gl.domElement.style.cursor = 'auto'
-      }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={release}
+      onPointerLeave={release}
+      onPointerOver={() => !drag.current.active && setCursor('grab')}
+      onPointerOut={() => !drag.current.active && setCursor('auto')}
     >
       {children}
     </group>

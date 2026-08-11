@@ -1,144 +1,143 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from './DragGroup'
-import { PALETTE } from './geo'
+import Lights from './Lights'
+import { PALETTE, lerp } from './geo'
 
-/**
- * PRODUK - OBSIDIAN Vault K1.
- * Perangkat low-poly yang bisa diputar dengan drag dan "dibongkar" jadi
- * exploded view saat diklik, memperlihatkan lapisan di dalamnya.
- */
-const LAYERS = [
-  { id: 'shell', label: 'Titanium shell', offset: 1.15, color: PALETTE.slate, metal: 0.9, rough: 0.3 },
-  { id: 'board', label: 'Secure element', offset: 0.35, color: PALETTE.carbon, metal: 0.5, rough: 0.6 },
-  { id: 'core', label: 'Key core', offset: -0.45, color: PALETTE.teal, metal: 0.2, rough: 0.25 }
+const PARTS = [
+  { id: 'shell', label: 'Titanium shell', offset: [0, 0.9, 0] },
+  { id: 'board', label: 'Secure element', offset: [0, 0, 0] },
+  { id: 'screen', label: 'E-ink display', offset: [0, 0.32, 0.55] },
+  { id: 'port', label: 'Air-gap port', offset: [0, -0.85, 0] }
 ]
 
-function Layer({ layer, index, exploded, onHover }) {
-  const ref = useRef()
-  const [hot, setHot] = useState(false)
+/**
+ * Perangkat vault: drag untuk memutar, klik untuk membongkar
+ * (exploded view), hover tiap bagian untuk melihat namanya.
+ */
+export default function ProductScene({ exploded, onToggle, onHoverPart }) {
+  const [active, setActive] = useState(null)
+  const refs = useRef({})
+  const glow = useRef()
+
+  const materials = useMemo(
+    () => ({
+      metal: new THREE.MeshStandardMaterial({
+        color: '#161d25',
+        metalness: 0.92,
+        roughness: 0.32
+      }),
+      inner: new THREE.MeshStandardMaterial({
+        color: '#0d141b',
+        metalness: 0.6,
+        roughness: 0.5,
+        flatShading: true
+      }),
+      screen: new THREE.MeshStandardMaterial({
+        color: '#0a0f14',
+        emissive: PALETTE.teal,
+        emissiveIntensity: 0.5,
+        metalness: 0.2,
+        roughness: 0.6
+      })
+    }),
+    []
+  )
 
   useFrame((state, delta) => {
-    const m = ref.current
-    if (!m) return
-    const dt = Math.min(delta, 0.05)
-    const y = exploded ? layer.offset : 0
+    const step = Math.min(delta, 0.05) * 4
     const t = state.clock.elapsedTime
-    const drift = exploded ? Math.sin(t * 1.1 + index) * 0.02 : 0
-    m.position.y = THREE.MathUtils.damp(m.position.y, y + drift, 6, dt)
+
+    PARTS.forEach((part) => {
+      const mesh = refs.current[part.id]
+      if (!mesh) return
+      const factor = exploded ? 1 : 0
+      const lift = active === part.id ? 0.12 : 0
+      mesh.position.x = lerp(mesh.position.x, part.offset[0] * factor, step)
+      mesh.position.y = lerp(mesh.position.y, part.offset[1] * factor + lift, step)
+      mesh.position.z = lerp(mesh.position.z, part.offset[2] * factor, step)
+    })
+
+    if (glow.current) {
+      glow.current.material.emissiveIntensity = 0.4 + Math.sin(t * 2) * 0.12
+    }
   })
 
-  const emissive = layer.id === 'core' ? PALETTE.teal : hot ? PALETTE.copper : PALETTE.indigo
-
-  return (
-    <group
-      ref={ref}
-      onPointerOver={(e) => {
-        e.stopPropagation()
-        setHot(true)
-        onHover(layer.label)
-      }}
-      onPointerOut={() => {
-        setHot(false)
-        onHover(null)
-      }}
-    >
-      {layer.id === 'shell' && (
-        <mesh>
-          <boxGeometry args={[1.5, 0.22, 2.6]} />
-          <meshStandardMaterial
-            color={layer.color}
-            emissive={emissive}
-            emissiveIntensity={hot ? 0.35 : 0.06}
-            metalness={layer.metal}
-            roughness={layer.rough}
-            flatShading
-          />
-        </mesh>
-      )}
-
-      {layer.id === 'board' && (
-        <group>
-          <mesh>
-            <boxGeometry args={[1.32, 0.08, 2.4]} />
-            <meshStandardMaterial
-              color={layer.color}
-              emissive={emissive}
-              emissiveIntensity={hot ? 0.3 : 0.1}
-              metalness={layer.metal}
-              roughness={layer.rough}
-              flatShading
-            />
-          </mesh>
-          {[-0.7, -0.2, 0.3, 0.8].map((z, i) => (
-            <mesh key={i} position={[i % 2 ? 0.35 : -0.35, 0.09, z]}>
-              <boxGeometry args={[0.3, 0.06, 0.3]} />
-              <meshStandardMaterial
-                color={PALETTE.steel}
-                emissive={PALETTE.teal}
-                emissiveIntensity={0.25}
-                metalness={0.7}
-                roughness={0.4}
-                flatShading
-              />
-            </mesh>
-          ))}
-        </group>
-      )}
-
-      {layer.id === 'core' && (
-        <group>
-          <mesh rotation={[0, Math.PI / 4, 0]}>
-            <octahedronGeometry args={[0.42, 0]} />
-            <meshStandardMaterial
-              color={layer.color}
-              emissive={PALETTE.teal}
-              emissiveIntensity={hot ? 1.2 : 0.7}
-              metalness={layer.metal}
-              roughness={layer.rough}
-              flatShading
-            />
-          </mesh>
-          <mesh>
-            <boxGeometry args={[1.5, 0.16, 2.6]} />
-            <meshStandardMaterial
-              color={PALETTE.carbon}
-              metalness={0.85}
-              roughness={0.35}
-              flatShading
-            />
-          </mesh>
-        </group>
-      )}
-    </group>
-  )
-}
-
-export default function ProductScene() {
-  const [exploded, setExploded] = useState(false)
-  const [, setLabel] = useState(null)
+  const bind = (id) => ({
+    ref: (el) => (refs.current[id] = el),
+    onPointerOver: (e) => {
+      e.stopPropagation()
+      setActive(id)
+      onHoverPart?.(PARTS.find((p) => p.id === id)?.label ?? null)
+    },
+    onPointerOut: () => {
+      setActive((prev) => (prev === id ? null : prev))
+      onHoverPart?.(null)
+    },
+    onClick: (e) => {
+      e.stopPropagation()
+      onToggle()
+    }
+  })
 
   return (
     <>
-      <ambientLight intensity={0.42} />
-      <directionalLight position={[3, 6, 4]} intensity={1.15} color="#e8eef6" />
-      <spotLight position={[-4, 5, -2]} angle={0.5} penumbra={0.8} intensity={0.9} color={PALETTE.indigo} />
-      <pointLight position={[0, -2.5, 3]} intensity={0.45} color={PALETTE.copper} />
+      <Lights intensity={1.05} />
+      <DragGroup autoSpin={0.22} sensitivity={0.006}>
+        {/* badan atas */}
+        <mesh {...bind('shell')} material={materials.metal}>
+          <boxGeometry args={[1.5, 0.42, 2.6]} />
+        </mesh>
 
-      <DragGroup autoSpin={0.22} parallax={1} hitRadius={3.4} maxPitch={0.7}>
-        <group
-          scale={1.05}
-          onClick={(e) => (e.stopPropagation(), setExploded((v) => !v))}
-        >
-          {LAYERS.map((layer, i) => (
-            <Layer key={layer.id} layer={layer} index={i} exploded={exploded} onHover={setLabel} />
-          ))}
+        {/* papan internal */}
+        <group {...bind('board')}>
+          <mesh material={materials.inner}>
+            <boxGeometry args={[1.34, 0.2, 2.4]} />
+          </mesh>
+          <mesh ref={glow} position={[0, 0.16, -0.3]}>
+            <boxGeometry args={[0.5, 0.1, 0.5]} />
+            <meshStandardMaterial
+              color="#111820"
+              emissive={PALETTE.indigo}
+              emissiveIntensity={0.4}
+              metalness={0.5}
+              roughness={0.4}
+            />
+          </mesh>
+          <mesh position={[0.42, 0.14, 0.6]}>
+            <cylinderGeometry args={[0.16, 0.16, 0.08, 6]} />
+            <meshStandardMaterial
+              color="#1b242e"
+              emissive={PALETTE.amber}
+              emissiveIntensity={0.35}
+              metalness={0.8}
+              roughness={0.3}
+              flatShading
+            />
+          </mesh>
         </group>
 
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.35, 0]}>
-          <ringGeometry args={[1.7, 2.5, 6]} />
-          <meshBasicMaterial color={PALETTE.steel} transparent opacity={0.16} side={THREE.DoubleSide} />
+        {/* layar */}
+        <mesh {...bind('screen')} material={materials.screen} rotation={[-Math.PI / 2, 0, 0]}>
+          <boxGeometry args={[1.05, 1.3, 0.06]} />
+        </mesh>
+
+        {/* port bawah */}
+        <group {...bind('port')}>
+          <mesh material={materials.metal}>
+            <boxGeometry args={[1.5, 0.34, 2.6]} />
+          </mesh>
+          <mesh position={[0, -0.2, 1.28]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.18, 0.18, 0.16, 8]} />
+            <meshStandardMaterial color="#0e151c" metalness={0.9} roughness={0.25} flatShading />
+          </mesh>
+        </group>
+
+        {/* bingkai wireframe sebagai aksen teknis */}
+        <mesh scale={[1.05, 1.6, 1.05]}>
+          <boxGeometry args={[1.6, 0.9, 2.75]} />
+          <meshBasicMaterial color={PALETTE.steel} wireframe transparent opacity={0.16} />
         </mesh>
       </DragGroup>
     </>
