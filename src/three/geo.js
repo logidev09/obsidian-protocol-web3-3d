@@ -1,21 +1,21 @@
 import * as THREE from 'three'
 
 /**
- * Palet. Sengaja dijaga low-saturation: dasar hitam kebiruan, aksen teal
- * teredam dan tembaga hangat. Tidak ada neon magenta/hijau stabilo.
+ * Palet. Sengaja low-saturation: dasar hitam kebiruan, aksen teal teredam
+ * dan tembaga hangat. Tidak ada neon magenta / hijau stabilo.
  */
 export const PALETTE = {
   void: '#06080b',
   carbon: '#0c1015',
   slate: '#1b232c',
-  steel: '#4a5c६b'.replace('६', '6'),
+  steel: '#4a5c6b',
   mist: '#c8d2dc',
   teal: '#3e8f8c',
   indigo: '#4a5a8c',
   copper: '#a9714b'
 }
 
-/** Titik-titik terdistribusi merata di permukaan bola (spiral Fibonacci). */
+/** Titik terdistribusi merata di permukaan bola (spiral Fibonacci). */
 export function fibonacciSphere(count, radius = 1) {
   const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
@@ -23,7 +23,9 @@ export function fibonacciSphere(count, radius = 1) {
     const y = 1 - (i / (count - 1)) * 2
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
-    points.push(new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius))
+    points.push(
+      new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
+    )
   }
   return points
 }
@@ -41,10 +43,7 @@ export function nearestPairs(points, threshold) {
   return pairs
 }
 
-/**
- * Profil performa perangkat. Dipakai untuk menurunkan jumlah polygon di
- * perangkat lemah dan mematikan animasi bila pengguna minta reduced motion.
- */
+/** Profil performa perangkat: turunkan beban di device lemah. */
 export function getPerfProfile() {
   if (typeof window === 'undefined') return { low: false, reducedMotion: false, dpr: [1, 2] }
 
@@ -57,7 +56,6 @@ export function getPerfProfile() {
   return { low, reducedMotion, dpr: low ? [1, 1.5] : [1, 2] }
 }
 
-/** Interpolasi frame-rate independent. */
 export function damp(current, target, lambda, delta) {
   return THREE.MathUtils.damp(current, target, lambda, Math.min(delta, 0.05))
 }

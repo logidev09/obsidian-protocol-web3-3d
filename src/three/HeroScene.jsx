@@ -2,126 +2,127 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from './DragGroup'
-import { PALETTE, fibonacciSphere, getPerfProfile } from './geo'
+import { PALETTE, getPerfProfile } from './geo'
 
 /**
- * SECTION 1 - artefak inti.
- * Icosahedron low-poly berlapis: badan solid flat-shaded, sangkar wireframe
- * berputar berlawanan arah, dan pecahan kunci yang mengorbit.
- * Klik badan untuk mengunci / membuka vault.
+ * HERO — "the vault core".
+ * Inti icosahedron padat, dikelilingi cangkang wireframe dan enam pecahan
+ * yang mengorbit. Hover pada pecahan membuatnya terangkat + menyala tembaga.
  */
+function Shard({ index, total, hovered, setHovered }) {
+  const mesh = useRef()
+  const isHot = hovered === index
 
-function Shards({ locked }) {
-  const ref = useRef()
-  const { low } = useMemo(getPerfProfile, [])
-  const points = useMemo(() => fibonacciSphere(low ? 10 : 18, 2.55), [low])
-  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const base = useMemo(() => {
+    const angle = (index / total) * Math.PI * 2
+    const tilt = Math.sin(index * 1.7) * 0.6
+    return { angle, tilt, radius: 2.35 + Math.cos(index * 2.1) * 0.18 }
+  }, [index, total])
 
-  useFrame((frame, delta) => {
-    const m = ref.current
+  useFrame((state, delta) => {
+    const m = mesh.current
     if (!m) return
-    const t = frame.clock.elapsedTime
-    const pull = locked ? 0.82 : 1.12
+    const dt = Math.min(delta, 0.05)
+    const t = state.clock.elapsedTime
 
-    points.forEach((p, i) => {
-      const wobble = Math.sin(t * 1.3 + i) * 0.08
-      dummy.position.set(p.x * pull, p.y * pull + wobble, p.z * pull)
-      dummy.rotation.set(t * 0.4 + i, t * 0.3, t * 0.2)
-      dummy.scale.setScalar(0.09 + Math.sin(t * 2 + i * 0.7) * 0.02)
-      dummy.updateMatrix()
-      m.setMatrixAt(i, dummy.matrix)
-    })
-    m.instanceMatrix.needsUpdate = true
-    m.rotation.y += Math.min(delta, 0.05) * 0.1
+    const radius = base.radius + (isHot ? 0.45 : 0) + Math.sin(t * 0.6 + index) * 0.05
+    const angle = base.angle + t * 0.12
+
+    m.position.x = THREE.MathUtils.damp(m.position.x, Math.cos(angle) * radius, 6, dt)
+    m.position.z = THREE.MathUtils.damp(m.position.z, Math.sin(angle) * radius, 6, dt)
+    m.position.y = THREE.MathUtils.damp(m.position.y, base.tilt + (isHot ? 0.25 : 0), 6, dt)
+
+    m.rotation.x += dt * 0.4
+    m.rotation.z += dt * 0.25
+
+    const scale = isHot ? 1.35 : 1
+    m.scale.setScalar(THREE.MathUtils.damp(m.scale.x, scale, 8, dt))
   })
 
   return (
-    <instancedMesh ref={ref} args={[null, null, points.length]}>
-      <tetrahedronGeometry args={[1, 0]} />
+    <mesh
+      ref={mesh}
+      onPointerOver={(e) => {
+        e.stopPropagation()
+        setHovered(index)
+      }}
+      onPointerOut={() => setHovered((h) => (h === index ? null : h))}
+    >
+      <tetrahedronGeometry args={[0.3, 0]} />
       <meshStandardMaterial
-        color={PALETTE.copper}
-        emissive={PALETTE.copper}
-        emissiveIntensity={0.35}
-        roughness={0.4}
+        color={isHot ? PALETTE.copper : PALETTE.steel}
+        emissive={isHot ? PALETTE.copper : PALETTE.teal}
+        emissiveIntensity={isHot ? 0.55 : 0.12}
+        roughness={0.35}
         metalness={0.7}
         flatShading
       />
-    </instancedMesh>
+    </mesh>
   )
 }
 
-function Artifact() {
-  const [locked, setLocked] = useState(true)
-  const [hover, setHover] = useState(false)
-  const cage = useRef()
-  const core = useRef()
+function Core() {
+  const inner = useRef()
+  const shell = useRef()
 
-  useFrame((frame, delta) => {
+  useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05)
-    const t = frame.clock.elapsedTime
-
-    if (cage.current) {
-      cage.current.rotation.y -= dt * 0.28
-      cage.current.rotation.x += dt * 0.06
-      const target = locked ? 1.34 : 1.62
-      const s = THREE.MathUtils.damp(cage.current.scale.x, target, 4, dt)
-      cage.current.scale.setScalar(s)
+    const t = state.clock.elapsedTime
+    if (inner.current) {
+      inner.current.rotation.y += dt * 0.15
+      inner.current.scale.setScalar(1 + Math.sin(t * 0.9) * 0.015)
     }
-
-    if (core.current) {
-      const pulse = 1 + Math.sin(t * 1.6) * 0.02
-      core.current.scale.setScalar(THREE.MathUtils.damp(core.current.scale.x, pulse, 6, dt))
+    if (shell.current) {
+      shell.current.rotation.y -= dt * 0.08
+      shell.current.rotation.x += dt * 0.03
     }
   })
 
   return (
-    <DragGroup autoSpin={0.18} parallax={1} maxPitch={0.55}>
-      <mesh
-        ref={core}
-        onClick={(e) => {
-          e.stopPropagation()
-          setLocked((v) => !v)
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation()
-          setHover(true)
-        }}
-        onPointerOut={() => setHover(false)}
-      >
-        <icosahedronGeometry args={[1.75, 0]} />
+    <group>
+      <mesh ref={inner}>
+        <icosahedronGeometry args={[1.15, 0]} />
         <meshStandardMaterial
           color={PALETTE.slate}
-          emissive={locked ? PALETTE.indigo : PALETTE.teal}
-          emissiveIntensity={hover ? 0.55 : 0.3}
+          emissive={PALETTE.teal}
+          emissiveIntensity={0.22}
           roughness={0.28}
-          metalness={0.92}
+          metalness={0.85}
           flatShading
         />
       </mesh>
 
-      <mesh ref={cage} scale={1.34}>
+      <mesh ref={shell}>
         <icosahedronGeometry args={[1.75, 1]} />
-        <meshBasicMaterial color={PALETTE.steel} wireframe transparent opacity={0.28} />
+        <meshBasicMaterial color={PALETTE.teal} wireframe transparent opacity={0.16} />
       </mesh>
 
-      <mesh scale={0.52}>
-        <icosahedronGeometry args={[1.75, 0]} />
-        <meshBasicMaterial color={locked ? PALETTE.indigo : PALETTE.teal} transparent opacity={0.5} />
+      <mesh>
+        <icosahedronGeometry args={[2.55, 0]} />
+        <meshBasicMaterial color={PALETTE.indigo} wireframe transparent opacity={0.07} />
       </mesh>
-
-      <Shards locked={locked} />
-    </DragGroup>
+    </group>
   )
 }
 
 export default function HeroScene() {
+  const [hovered, setHovered] = useState(null)
+  const { low } = getPerfProfile()
+  const shardCount = low ? 4 : 7
+
   return (
     <>
-      <ambientLight intensity={0.45} />
-      <directionalLight position={[4, 5, 5]} intensity={1.1} color={PALETTE.mist} />
-      <pointLight position={[-5, -2, 3]} intensity={26} distance={18} color={PALETTE.indigo} />
-      <pointLight position={[4, 3, -4]} intensity={18} distance={16} color={PALETTE.teal} />
-      <Artifact />
+      <ambientLight intensity={0.35} />
+      <directionalLight position={[4, 6, 5]} intensity={1.1} color="#dfe8f0" />
+      <pointLight position={[-5, -2, -4]} intensity={0.7} color={PALETTE.indigo} />
+      <pointLight position={[3, -3, 4]} intensity={0.45} color={PALETTE.copper} />
+
+      <DragGroup autoSpin={0.18} hitRadius={3.4}>
+        <Core />
+        {Array.from({ length: shardCount }, (_, i) => (
+          <Shard key={i} index={i} total={shardCount} hovered={hovered} setHovered={setHovered} />
+        ))}
+      </DragGroup>
     </>
   )
 }
