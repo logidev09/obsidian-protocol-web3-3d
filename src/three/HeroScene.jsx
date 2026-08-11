@@ -2,126 +2,134 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from './DragGroup'
-import { PALETTE, getPerfProfile } from './geo'
+import { PALETTE, explodeShards, getPerfProfile } from './geo'
 
 /**
- * HERO — "the vault core".
- * Inti icosahedron padat, dikelilingi cangkang wireframe dan enam pecahan
- * yang mengorbit. Hover pada pecahan membuatnya terangkat + menyala tembaga.
+ * HERO - inti kunci terenkripsi.
+ * Icosahedron low-poly yang pecah jadi kepingan saat diklik, lalu menyatu lagi
+ * saat diklik ulang. Bisa diputar bebas dengan drag.
  */
-function Shard({ index, total, hovered, setHovered }) {
-  const mesh = useRef()
-  const isHot = hovered === index
+function Shard({ shard, open, index }) {
+  const ref = useRef()
+  const [hot, setHot] = useState(false)
 
-  const base = useMemo(() => {
-    const angle = (index / total) * Math.PI * 2
-    const tilt = Math.sin(index * 1.7) * 0.6
-    return { angle, tilt, radius: 2.35 + Math.cos(index * 2.1) * 0.18 }
-  }, [index, total])
+  const target = useMemo(
+    () => shard.origin.clone().add(shard.direction.clone().multiplyScalar(0.55)),
+    [shard]
+  )
 
   useFrame((state, delta) => {
-    const m = mesh.current
+    const m = ref.current
     if (!m) return
     const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
+    const dest = open ? target : shard.origin
+    const float = open ? Math.sin(t * 1.4 + index) * 0.035 : 0
 
-    const radius = base.radius + (isHot ? 0.45 : 0) + Math.sin(t * 0.6 + index) * 0.05
-    const angle = base.angle + t * 0.12
+    m.position.x = THREE.MathUtils.damp(m.position.x, dest.x, 6, dt)
+    m.position.y = THREE.MathUtils.damp(m.position.y, dest.y + float, 6, dt)
+    m.position.z = THREE.MathUtils.damp(m.position.z, dest.z, 6, dt)
 
-    m.position.x = THREE.MathUtils.damp(m.position.x, Math.cos(angle) * radius, 6, dt)
-    m.position.z = THREE.MathUtils.damp(m.position.z, Math.sin(angle) * radius, 6, dt)
-    m.position.y = THREE.MathUtils.damp(m.position.y, base.tilt + (isHot ? 0.25 : 0), 6, dt)
-
-    m.rotation.x += dt * 0.4
-    m.rotation.z += dt * 0.25
-
-    const scale = isHot ? 1.35 : 1
-    m.scale.setScalar(THREE.MathUtils.damp(m.scale.x, scale, 8, dt))
+    const spin = open ? 0.25 : 0
+    m.rotation.x += spin * dt
+    m.rotation.z += spin * 0.6 * dt
   })
 
   return (
     <mesh
-      ref={mesh}
+      ref={ref}
+      geometry={shard.geometry}
+      position={shard.origin}
       onPointerOver={(e) => {
         e.stopPropagation()
-        setHovered(index)
+        setHot(true)
       }}
-      onPointerOut={() => setHovered((h) => (h === index ? null : h))}
+      onPointerOut={() => setHot(false)}
     >
-      <tetrahedronGeometry args={[0.3, 0]} />
       <meshStandardMaterial
-        color={isHot ? PALETTE.copper : PALETTE.steel}
-        emissive={isHot ? PALETTE.copper : PALETTE.teal}
-        emissiveIntensity={isHot ? 0.55 : 0.12}
-        roughness={0.35}
-        metalness={0.7}
+        color={hot ? PALETTE.copper : PALETTE.slate}
+        emissive={hot ? PALETTE.copper : PALETTE.teal}
+        emissiveIntensity={hot ? 0.5 : open ? 0.22 : 0.08}
+        roughness={0.32}
+        metalness={0.78}
+        flatShading
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  )
+}
+
+function Core({ open }) {
+  const ref = useRef()
+
+  useFrame((state, delta) => {
+    const m = ref.current
+    if (!m) return
+    const dt = Math.min(delta, 0.05)
+    const t = state.clock.elapsedTime
+    const pulse = 1 + Math.sin(t * 2) * 0.05
+    m.scale.setScalar(THREE.MathUtils.damp(m.scale.x, (open ? 0.92 : 0.55) * pulse, 6, dt))
+    m.rotation.y += 0.35 * dt
+  })
+
+  return (
+    <mesh ref={ref}>
+      <icosahedronGeometry args={[1, 0]} />
+      <meshStandardMaterial
+        color={PALETTE.teal}
+        emissive={PALETTE.teal}
+        emissiveIntensity={open ? 1.1 : 0.55}
+        roughness={0.2}
+        metalness={0.3}
         flatShading
       />
     </mesh>
   )
 }
 
-function Core() {
-  const inner = useRef()
-  const shell = useRef()
-
-  useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
-    if (inner.current) {
-      inner.current.rotation.y += dt * 0.15
-      inner.current.scale.setScalar(1 + Math.sin(t * 0.9) * 0.015)
-    }
-    if (shell.current) {
-      shell.current.rotation.y -= dt * 0.08
-      shell.current.rotation.x += dt * 0.03
-    }
+function Halo() {
+  const ref = useRef()
+  useFrame((_, delta) => {
+    if (ref.current) ref.current.rotation.z += 0.12 * Math.min(delta, 0.05)
   })
-
   return (
-    <group>
-      <mesh ref={inner}>
-        <icosahedronGeometry args={[1.15, 0]} />
-        <meshStandardMaterial
-          color={PALETTE.slate}
-          emissive={PALETTE.teal}
-          emissiveIntensity={0.22}
-          roughness={0.28}
-          metalness={0.85}
-          flatShading
-        />
-      </mesh>
-
-      <mesh ref={shell}>
-        <icosahedronGeometry args={[1.75, 1]} />
-        <meshBasicMaterial color={PALETTE.teal} wireframe transparent opacity={0.16} />
-      </mesh>
-
+    <group ref={ref} rotation={[1.2, 0, 0]}>
       <mesh>
-        <icosahedronGeometry args={[2.55, 0]} />
-        <meshBasicMaterial color={PALETTE.indigo} wireframe transparent opacity={0.07} />
+        <torusGeometry args={[2.35, 0.012, 3, 64]} />
+        <meshBasicMaterial color={PALETTE.steel} transparent opacity={0.5} />
+      </mesh>
+      <mesh rotation={[0, 0.9, 0]}>
+        <torusGeometry args={[2.7, 0.008, 3, 64]} />
+        <meshBasicMaterial color={PALETTE.indigo} transparent opacity={0.35} />
       </mesh>
     </group>
   )
 }
 
 export default function HeroScene() {
-  const [hovered, setHovered] = useState(null)
+  const [open, setOpen] = useState(false)
   const { low } = getPerfProfile()
-  const shardCount = low ? 4 : 7
+
+  const shards = useMemo(() => {
+    const geo = new THREE.IcosahedronGeometry(1.9, low ? 1 : 2)
+    return explodeShards(geo, low ? 24 : 44)
+  }, [low])
 
   return (
     <>
-      <ambientLight intensity={0.35} />
-      <directionalLight position={[4, 6, 5]} intensity={1.1} color="#dfe8f0" />
-      <pointLight position={[-5, -2, -4]} intensity={0.7} color={PALETTE.indigo} />
-      <pointLight position={[3, -3, 4]} intensity={0.45} color={PALETTE.copper} />
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[4, 6, 5]} intensity={1.1} color="#e6edf5" />
+      <pointLight position={[-5, -2, -3]} intensity={0.8} color={PALETTE.indigo} />
+      <pointLight position={[2, -3, 4]} intensity={0.5} color={PALETTE.copper} />
 
-      <DragGroup autoSpin={0.18} hitRadius={3.4}>
-        <Core />
-        {Array.from({ length: shardCount }, (_, i) => (
-          <Shard key={i} index={i} total={shardCount} hovered={hovered} setHovered={setHovered} />
-        ))}
+      <DragGroup autoSpin={0.18} parallax={1.2} hitRadius={3.2}>
+        <group onClick={(e) => (e.stopPropagation(), setOpen((v) => !v))}>
+          {shards.map((s, i) => (
+            <Shard key={i} shard={s} open={open} index={i} />
+          ))}
+        </group>
+        <Core open={open} />
+        <Halo />
       </DragGroup>
     </>
   )

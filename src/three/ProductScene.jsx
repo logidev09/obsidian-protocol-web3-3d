@@ -5,149 +5,141 @@ import DragGroup from './DragGroup'
 import { PALETTE } from './geo'
 
 /**
- * PRODUK — modul vault perangkat keras.
- * Klik untuk membongkar (exploded view): tiga lapis bergeser terpisah dan
- * label teknis muncul. Klik lagi untuk merapatkan kembali.
+ * PRODUK - OBSIDIAN Vault K1.
+ * Perangkat low-poly yang bisa diputar dengan drag dan "dibongkar" jadi
+ * exploded view saat diklik, memperlihatkan lapisan di dalamnya.
  */
-function Layer({ offset, exploded, children }) {
+const LAYERS = [
+  { id: 'shell', label: 'Titanium shell', offset: 1.15, color: PALETTE.slate, metal: 0.9, rough: 0.3 },
+  { id: 'board', label: 'Secure element', offset: 0.35, color: PALETTE.carbon, metal: 0.5, rough: 0.6 },
+  { id: 'core', label: 'Key core', offset: -0.45, color: PALETTE.teal, metal: 0.2, rough: 0.25 }
+]
+
+function Layer({ layer, index, exploded, onHover }) {
   const ref = useRef()
-
-  useFrame((_, delta) => {
-    const g = ref.current
-    if (!g) return
-    const dt = Math.min(delta, 0.05)
-    const target = exploded ? offset : 0
-    g.position.y = THREE.MathUtils.damp(g.position.y, target, 5, dt)
-  })
-
-  return <group ref={ref}>{children}</group>
-}
-
-function Chassis() {
-  return (
-    <mesh castShadow>
-      <boxGeometry args={[2.6, 0.32, 1.7]} />
-      <meshStandardMaterial
-        color={PALETTE.carbon}
-        roughness={0.42}
-        metalness={0.8}
-        flatShading
-      />
-    </mesh>
-  )
-}
-
-function SecureElement({ hot }) {
-  const ref = useRef()
+  const [hot, setHot] = useState(false)
 
   useFrame((state, delta) => {
-    if (!ref.current) return
+    const m = ref.current
+    if (!m) return
+    const dt = Math.min(delta, 0.05)
+    const y = exploded ? layer.offset : 0
     const t = state.clock.elapsedTime
-    ref.current.material.emissiveIntensity = THREE.MathUtils.damp(
-      ref.current.material.emissiveIntensity,
-      hot ? 0.9 : 0.3 + Math.sin(t * 1.4) * 0.08,
-      6,
-      Math.min(delta, 0.05)
-    )
+    const drift = exploded ? Math.sin(t * 1.1 + index) * 0.02 : 0
+    m.position.y = THREE.MathUtils.damp(m.position.y, y + drift, 6, dt)
   })
 
-  return (
-    <group>
-      <mesh>
-        <boxGeometry args={[2.3, 0.18, 1.45]} />
-        <meshStandardMaterial color={PALETTE.slate} roughness={0.5} metalness={0.6} flatShading />
-      </mesh>
-      <mesh ref={ref} position={[0, 0.14, 0]}>
-        <boxGeometry args={[0.75, 0.1, 0.75]} />
-        <meshStandardMaterial
-          color={PALETTE.steel}
-          emissive={PALETTE.teal}
-          emissiveIntensity={0.3}
-          roughness={0.3}
-          metalness={0.7}
-        />
-      </mesh>
-      {[-0.85, 0.85].map((x) => (
-        <mesh key={x} position={[x, 0.12, 0]}>
-          <boxGeometry args={[0.32, 0.06, 0.9]} />
-          <meshStandardMaterial color={PALETTE.copper} roughness={0.35} metalness={0.9} />
-        </mesh>
-      ))}
-    </group>
-  )
-}
+  const emissive = layer.id === 'core' ? PALETTE.teal : hot ? PALETTE.copper : PALETTE.indigo
 
-function Faceplate({ hot }) {
   return (
-    <group>
-      <mesh>
-        <boxGeometry args={[2.6, 0.16, 1.7]} />
-        <meshStandardMaterial
-          color={PALETTE.slate}
-          roughness={0.28}
-          metalness={0.9}
-          flatShading
-        />
-      </mesh>
-      {/* jendela display */}
-      <mesh position={[0, 0.09, -0.25]}>
-        <boxGeometry args={[1.5, 0.02, 0.62]} />
-        <meshStandardMaterial
-          color="#080c10"
-          emissive={PALETTE.teal}
-          emissiveIntensity={hot ? 0.5 : 0.2}
-          roughness={0.15}
-          metalness={0.4}
-        />
-      </mesh>
-      {/* tombol konfirmasi fisik */}
-      {[-0.55, 0.55].map((x) => (
-        <mesh key={x} position={[x, 0.11, 0.52]}>
-          <cylinderGeometry args={[0.11, 0.11, 0.06, 6]} />
-          <meshStandardMaterial color={PALETTE.copper} roughness={0.4} metalness={0.85} />
+    <group
+      ref={ref}
+      onPointerOver={(e) => {
+        e.stopPropagation()
+        setHot(true)
+        onHover(layer.label)
+      }}
+      onPointerOut={() => {
+        setHot(false)
+        onHover(null)
+      }}
+    >
+      {layer.id === 'shell' && (
+        <mesh>
+          <boxGeometry args={[1.5, 0.22, 2.6]} />
+          <meshStandardMaterial
+            color={layer.color}
+            emissive={emissive}
+            emissiveIntensity={hot ? 0.35 : 0.06}
+            metalness={layer.metal}
+            roughness={layer.rough}
+            flatShading
+          />
         </mesh>
-      ))}
+      )}
+
+      {layer.id === 'board' && (
+        <group>
+          <mesh>
+            <boxGeometry args={[1.32, 0.08, 2.4]} />
+            <meshStandardMaterial
+              color={layer.color}
+              emissive={emissive}
+              emissiveIntensity={hot ? 0.3 : 0.1}
+              metalness={layer.metal}
+              roughness={layer.rough}
+              flatShading
+            />
+          </mesh>
+          {[-0.7, -0.2, 0.3, 0.8].map((z, i) => (
+            <mesh key={i} position={[i % 2 ? 0.35 : -0.35, 0.09, z]}>
+              <boxGeometry args={[0.3, 0.06, 0.3]} />
+              <meshStandardMaterial
+                color={PALETTE.steel}
+                emissive={PALETTE.teal}
+                emissiveIntensity={0.25}
+                metalness={0.7}
+                roughness={0.4}
+                flatShading
+              />
+            </mesh>
+          ))}
+        </group>
+      )}
+
+      {layer.id === 'core' && (
+        <group>
+          <mesh rotation={[0, Math.PI / 4, 0]}>
+            <octahedronGeometry args={[0.42, 0]} />
+            <meshStandardMaterial
+              color={layer.color}
+              emissive={PALETTE.teal}
+              emissiveIntensity={hot ? 1.2 : 0.7}
+              metalness={layer.metal}
+              roughness={layer.rough}
+              flatShading
+            />
+          </mesh>
+          <mesh>
+            <boxGeometry args={[1.5, 0.16, 2.6]} />
+            <meshStandardMaterial
+              color={PALETTE.carbon}
+              metalness={0.85}
+              roughness={0.35}
+              flatShading
+            />
+          </mesh>
+        </group>
+      )}
     </group>
   )
 }
 
 export default function ProductScene() {
   const [exploded, setExploded] = useState(false)
-  const [hot, setHot] = useState(false)
+  const [, setLabel] = useState(null)
 
   return (
     <>
-      <ambientLight intensity={0.4} />
-      <directionalLight position={[5, 7, 4]} intensity={1.2} color="#e6edf3" />
-      <pointLight position={[-4, 2, -3]} intensity={0.6} color={PALETTE.indigo} />
-      <spotLight position={[0, 6, 2]} angle={0.5} penumbra={0.8} intensity={0.8} color={PALETTE.teal} />
+      <ambientLight intensity={0.42} />
+      <directionalLight position={[3, 6, 4]} intensity={1.15} color="#e8eef6" />
+      <spotLight position={[-4, 5, -2]} angle={0.5} penumbra={0.8} intensity={0.9} color={PALETTE.indigo} />
+      <pointLight position={[0, -2.5, 3]} intensity={0.45} color={PALETTE.copper} />
 
-      <DragGroup autoSpin={0.22} parallax={0.6} hitRadius={3}>
+      <DragGroup autoSpin={0.22} parallax={1} hitRadius={3.4} maxPitch={0.7}>
         <group
-          rotation={[0.42, 0, 0]}
-          onClick={(e) => {
-            e.stopPropagation()
-            setExploded((v) => !v)
-          }}
-          onPointerOver={() => setHot(true)}
-          onPointerOut={() => setHot(false)}
+          scale={1.05}
+          onClick={(e) => (e.stopPropagation(), setExploded((v) => !v))}
         >
-          <Layer offset={-0.75} exploded={exploded}>
-            <Chassis />
-          </Layer>
-          <Layer offset={0} exploded={exploded}>
-            <SecureElement hot={hot} />
-          </Layer>
-          <Layer offset={0.85} exploded={exploded}>
-            <Faceplate hot={hot} />
-          </Layer>
-
-          {/* bingkai orientasi */}
-          <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -1.4, 0]}>
-            <ringGeometry args={[1.85, 1.9, 6]} />
-            <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.18} side={THREE.DoubleSide} />
-          </mesh>
+          {LAYERS.map((layer, i) => (
+            <Layer key={layer.id} layer={layer} index={i} exploded={exploded} onHover={setLabel} />
+          ))}
         </group>
+
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.35, 0]}>
+          <ringGeometry args={[1.7, 2.5, 6]} />
+          <meshBasicMaterial color={PALETTE.steel} transparent opacity={0.16} side={THREE.DoubleSide} />
+        </mesh>
       </DragGroup>
     </>
   )
