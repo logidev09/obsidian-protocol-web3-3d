@@ -1,71 +1,68 @@
 import * as THREE from 'three'
 
 /**
- * Palet — cyberpunk yang "diredam".
- * Aturannya: base gelap kebiruan netral, aksen hanya 2 (teal dingin + indigo),
- * plus sand hangat sebagai penyeimbang. Tidak ada magenta/cyan neon penuh.
+ * Palet — cyberpunk yang ditahan.
+ * Dasar hampir netral (void/ink/slate), aksen dipakai hemat.
+ * Sengaja tanpa magenta/cyan neon jenuh supaya tidak norak.
  */
 export const PALETTE = {
   void: '#06080b',
-  ink: '#0d1218',
-  slate: '#151d26',
-  steel: '#2b3947',
-  mist: '#8fa3b8',
-  teal: '#4fd1c5',
-  indigo: '#6b7cff',
-  violet: '#8b7bd8',
-  sand: '#d9c9a3'
+  ink: '#0d1117',
+  slate: '#161c26',
+  steel: '#2b3442',
+  mist: '#c7d0da',
+  teal: '#4fd1c5',   // aksen utama, dingin
+  indigo: '#5b6cff', // aksen sekunder
+  sand: '#c9a227'    // aksen hangat, sangat jarang
 }
 
-/** Kotak bersudut tumpul low-poly, dipakai bodi perangkat. */
-export function roundedBoxGeometry(w, h, d, r = 0.2, segments = 3) {
-  const shape = new THREE.Shape()
-  const x = -w / 2
-  const y = -h / 2
-  const radius = Math.min(r, w / 2, h / 2)
+/** PRNG deterministik — bentuk acak tapi konsisten tiap reload. */
+export function seededRandom(seed = 1) {
+  let s = seed >>> 0
+  return function next() {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 4294967296
+  }
+}
 
-  shape.moveTo(x + radius, y)
-  shape.lineTo(x + w - radius, y)
-  shape.quadraticCurveTo(x + w, y, x + w, y + radius)
-  shape.lineTo(x + w, y + h - radius)
-  shape.quadraticCurveTo(x + w, y + h, x + w - radius, y + h)
-  shape.lineTo(x + radius, y + h)
-  shape.quadraticCurveTo(x, y + h, x, y + h - radius)
-  shape.lineTo(x, y + radius)
-  shape.quadraticCurveTo(x, y, x + radius, y)
+/** Kotak dengan sudut membulat, dibangun dari extrude shape (low-poly, murah). */
+export function roundedBoxGeometry(width, height, depth, radius = 0.16) {
+  const w = width / 2 - radius
+  const h = height / 2 - radius
+  const shape = new THREE.Shape()
+  shape.moveTo(-w, -h - radius)
+  shape.lineTo(w, -h - radius)
+  shape.quadraticCurveTo(w + radius, -h - radius, w + radius, -h)
+  shape.lineTo(w + radius, h)
+  shape.quadraticCurveTo(w + radius, h + radius, w, h + radius)
+  shape.lineTo(-w, h + radius)
+  shape.quadraticCurveTo(-w - radius, h + radius, -w - radius, h)
+  shape.lineTo(-w - radius, -h)
+  shape.quadraticCurveTo(-w - radius, -h - radius, -w, -h - radius)
 
   const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: d,
+    depth,
     bevelEnabled: true,
-    bevelThickness: 0.04,
-    bevelSize: 0.04,
-    bevelSegments: 2,
-    curveSegments: segments
+    bevelSize: 0.02,
+    bevelThickness: 0.02,
+    bevelSegments: 1,
+    curveSegments: 4
   })
   geo.center()
   geo.computeVertexNormals()
   return geo
 }
 
-/** Deret angka pseudo-acak yang stabil antar-render. */
-export function seededRandom(seed) {
-  let s = seed
-  return () => {
-    s = (s * 16807) % 2147483647
-    return (s - 1) / 2147483646
-  }
-}
-
-/** Titik-titik pada bola Fibonacci — dipakai simpul jaringan. */
+/** Titik-titik pada bola Fibonacci — distribusi merata untuk node jaringan. */
 export function fibonacciSphere(count, radius = 1) {
   const points = []
-  const phi = Math.PI * (3 - Math.sqrt(5))
+  const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
     const y = 1 - (i / (count - 1)) * 2
     const r = Math.sqrt(1 - y * y)
-    const theta = phi * i
+    const theta = golden * i
     points.push(
-      new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
+      new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
     )
   }
   return points

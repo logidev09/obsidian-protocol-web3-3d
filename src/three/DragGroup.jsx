@@ -1,16 +1,16 @@
-import { useRef, useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 
 /**
- * Pembungkus interaksi mouse untuk objek 3D.
- *
- * - Drag kiri  : memutar objek (dengan inersia, bukan snap kasar).
- * - Pointer move: parallax halus mengikuti kursor.
- * - Auto-spin  : berputar pelan saat idle, berhenti saat disentuh.
- *
- * Penting: listener drag dipasang di elemen canvas, BUKAN window, dan
- * scroll halaman tidak pernah dikunci — jadi scroll tetap nyaman di mobile.
+ * Kontrol putar berbasis pointer, ditulis manual (bukan OrbitControls)
+ * supaya scroll halaman TIDAK PERNAH direbut oleh canvas:
+ * - wheel tidak diikat sama sekali → scroll selalu lolos ke halaman
+ * - drag hanya aktif saat pointer ditekan di atas canvas
+ * - ada inersia + auto-spin pelan saat idle
+ * - parallax halus mengikuti posisi pointer
+ * - di layar sentuh, drag vertikal dibiarkan untuk scroll; hanya
+ *   gerak horizontal yang memutar objek
  */
 export default function DragGroup({
   children,
@@ -30,25 +30,27 @@ export default function DragGroup({
     velY: 0,
     rotX: 0,
     rotY: 0,
-    idle: 0,
     pointerX: 0,
-    pointerY: 0
+    pointerY: 0,
+    idle: 0,
+    touch: false
   })
 
   useEffect(() => {
     const el = gl.domElement
     const s = state.current
 
-    const onDown = (e) => {
-      if (e.button !== undefined && e.button !== 0) return
+    const down = (e) => {
       s.dragging = true
-      s.idle = 0
+      s.touch = e.pointerType === 'touch'
       s.lastX = e.clientX
       s.lastY = e.clientY
+      s.idle = 0
+      if (!s.touch) el.setPointerCapture?.(e.pointerId)
       el.style.cursor = 'grabbing'
     }
 
-    const onMove = (e) => {
+    const move = (e) => {
       const rect = el.getBoundingClientRect()
       s.pointerX = ((e.clientX - rect.left) / rect.width) * 2 - 1
       s.pointerY = ((e.clientY - rect.top) / rect.height) * 2 - 1
@@ -58,94 +60,68 @@ export default function DragGroup({
       const dy = e.clientY - s.lastY
       s.lastX = e.clientX
       s.lastY = e.clientY
-      s.velY += dx * 0.006
-      s.velX += dy * 0.004
+      s.velY = dx * 0.005
+      // di sentuh, jangan curi gerak vertikal — itu milik scroll
+      s.velX = s.touch ? 0 : dy * 0.005
+      s.idle = 0
     }
 
-    const onUp = () => {
+    const up = (e) => {
       s.dragging = false
+      el.releasePointerCapture?.(e.pointerId)
       el.style.cursor = 'grab'
     }
 
-    // Touch: satu jari = putar objek, tapi kita TIDAK preventDefault
-    // supaya gestur scroll vertikal tetap milik halaman.
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 1) return
-      s.lastX = e.touches[0].clientX
-      s.lastY = e.touches[0].clientY
-    }
-
-    const onTouchMove = (e) => {
-      if (e.touches.length !== 1) return
-      const t = e.touches[0]
-      const dx = t.clientX - s.lastX
-      const dy = t.clientY - s.lastY
-      // hanya ambil alih kalau gerakan dominan horizontal
-      if (Math.abs(dx) > Math.abs(dy)) {
-        s.velY += dx * 0.005
-        s.idle = 0
-      }
-      s.lastX = t.clientX
-      s.lastY = t.clientY
+    const leave = () => {
+      s.dragging = false
+      s.pointerX = 0
+      s.pointerY = 0
+      el.style.cursor = 'grab'
     }
 
     el.style.cursor = 'grab'
-    el.addEventListener('pointerdown', onDown)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    el.addEventListener('touchstart', onTouchStart, { passive: true })
-    el.addEventListener('touchmove', onTouchMove, { passive: true })
+    el.style.touchAction = 'pan-y' // kunci: scroll vertikal tetap milik halaman
+
+    el.addEventListener('pointerdown', down)
+    el.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    el.addEventListener('pointerleave', leave)
 
     return () => {
-      el.removeEventListener('pointerdown', onDown)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('pointerdown', down)
+      el.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      el.removeEventListener('pointerleave', leave)
     }
   }, [gl])
 
   useFrame((_, delta) => {
     const s = state.current
+    const g = group.current
+    if (!g) return
     const dt = Math.min(delta, 0.05)
-    if (!group.current) return
 
     if (!s.dragging) {
-      s.idle += dt
       s.velX *= damping
       s.velY *= damping
-      if (autoSpin > 0 && s.idle > 1.2) {
-        s.velY += autoSpin * dt * 0.02
+      s.idle += dt
+      // auto-spin baru masuk perlahan setelah pointer diam sebentar
+      if (s.idle > 0.6) {
+        const ramp = Math.min((s.idle - 0.6) / 1.5, 1)
+        s.rotY += dt * 0.12 * autoSpin * ramp
       }
     }
 
-    s.rotX = THREE.MathUtils.clamp(s.rotX + s.velX, -0.9, 0.9)
+    s.rotX += s.velX
     s.rotY += s.velY
+    s.rotX = THREE.MathUtils.clamp(s.rotX, -0.9, 0.9)
 
-    group.current.rotation.x = THREE.MathUtils.damp(
-      group.current.rotation.x,
-      s.rotX + s.pointerY * parallax * 0.18,
-      6,
-      dt
-    )
-    group.current.rotation.y = THREE.MathUtils.damp(
-      group.current.rotation.y,
-      s.rotY + s.pointerX * parallax * 0.25,
-      6,
-      dt
-    )
-    group.current.position.x = THREE.MathUtils.damp(
-      group.current.position.x,
-      s.pointerX * parallax * 0.22,
-      4,
-      dt
-    )
-    group.current.position.y = THREE.MathUtils.damp(
-      group.current.position.y,
-      -s.pointerY * parallax * 0.16,
-      4,
-      dt
-    )
+    const px = s.pointerX * 0.18 * parallax
+    const py = -s.pointerY * 0.14 * parallax
+
+    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, s.rotX + py, 6, dt)
+    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.rotY + px, 6, dt)
+    g.position.y = THREE.MathUtils.damp(g.position.y, s.pointerY * -0.05, 4, dt)
   })
 
   return (
