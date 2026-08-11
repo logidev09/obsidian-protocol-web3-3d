@@ -5,74 +5,66 @@ import { PALETTE, getPerfProfile } from './geo'
 
 /**
  * SECTION 4 - grid ledger.
- * Bidang kolom yang tingginya bereaksi terhadap jarak pointer,
- * seperti gelombang blok yang tersettle. Tidak bisa di-drag
- * supaya area lebar ini tetap aman untuk scroll.
+ * Bidang batang yang tingginya bereaksi terhadap posisi pointer, seperti
+ * riak pada buku besar. Tidak ada drag di sini supaya scroll tetap ringan;
+ * interaksinya murni hover.
  */
 
 function Grid() {
-  const { low } = useMemo(getPerfProfile, [])
-  const cols = low ? 14 : 22
-  const rows = low ? 8 : 12
-  const gap = 0.42
-  const total = cols * rows
+  const ref = useRef()
+  const { low, reducedMotion } = useMemo(getPerfProfile, [])
+  const size = low ? 14 : 22
+  const gap = 0.34
+  const count = size * size
 
-  const mesh = useRef()
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const color = useMemo(() => new THREE.Color(), [])
-  const pointer3d = useRef(new THREE.Vector2(0, 0))
-
-  const cells = useMemo(() => {
-    const arr = []
-    for (let x = 0; x < cols; x++) {
-      for (let z = 0; z < rows; z++) {
-        arr.push({
-          x: (x - (cols - 1) / 2) * gap,
-          z: (z - (rows - 1) / 2) * gap,
-          seed: Math.random()
-        })
-      }
-    }
-    return arr
-  }, [cols, rows])
+  const base = useMemo(() => new THREE.Color(PALETTE.slate), [])
+  const crest = useMemo(() => new THREE.Color(PALETTE.teal), [])
+  const pointer = useMemo(() => new THREE.Vector2(), [])
 
   useFrame((frame, delta) => {
-    const m = mesh.current
+    const m = ref.current
     if (!m) return
-    const t = frame.clock.elapsedTime
+    const t = reducedMotion ? 0 : frame.clock.elapsedTime
     const dt = Math.min(delta, 0.05)
 
-    // proyeksi kasar pointer ke bidang grid
-    pointer3d.current.x = THREE.MathUtils.damp(pointer3d.current.x, frame.pointer.x * 4.6, 6, dt)
-    pointer3d.current.y = THREE.MathUtils.damp(pointer3d.current.y, -frame.pointer.y * 2.4, 6, dt)
+    pointer.x = THREE.MathUtils.damp(pointer.x, frame.pointer.x * (size * gap) * 0.5, 6, dt)
+    pointer.y = THREE.MathUtils.damp(pointer.y, frame.pointer.y * (size * gap) * 0.5, 6, dt)
 
-    cells.forEach((cell, i) => {
-      const dist = Math.hypot(cell.x - pointer3d.current.x, cell.z - pointer3d.current.y)
-      const ripple = Math.max(0, 1 - dist / 2.4)
-      const idle = (Math.sin(t * 0.9 + cell.seed * 8 + cell.x) * 0.5 + 0.5) * 0.18
-      const h = 0.06 + idle + ripple * ripple * 1.15
+    let i = 0
+    const offset = ((size - 1) * gap) / 2
 
-      dummy.position.set(cell.x, h / 2, cell.z)
-      dummy.scale.set(0.26, h, 0.26)
-      dummy.updateMatrix()
-      m.setMatrixAt(i, dummy.matrix)
+    for (let x = 0; x < size; x++) {
+      for (let z = 0; z < size; z++) {
+        const px = x * gap - offset
+        const pz = z * gap - offset
 
-      color.set(ripple > 0.55 ? PALETTE.teal : ripple > 0.2 ? PALETTE.steel : PALETTE.slate)
-      m.setColorAt(i, color)
-    })
+        const wave = Math.sin(px * 1.2 + t * 0.9) * Math.cos(pz * 1.2 - t * 0.7) * 0.16
+        const d = Math.hypot(px - pointer.x, pz + pointer.y)
+        const ripple = Math.max(0, 1 - d / 2.6) ** 2 * 0.75
+        const h = 0.06 + wave + ripple
+
+        dummy.position.set(px, h / 2, pz)
+        dummy.scale.set(1, Math.max(0.04, h) / 0.24, 1)
+        dummy.updateMatrix()
+        m.setMatrixAt(i, dummy.matrix)
+
+        color.copy(base).lerp(crest, THREE.MathUtils.clamp(ripple * 1.6, 0, 1))
+        m.setColorAt(i, color)
+        i++
+      }
+    }
 
     m.instanceMatrix.needsUpdate = true
     if (m.instanceColor) m.instanceColor.needsUpdate = true
   })
 
   return (
-    <group rotation={[0.45, -0.35, 0]} position={[0, -0.6, 0]}>
-      <instancedMesh ref={mesh} args={[null, null, total]}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial roughness={0.5} metalness={0.6} flatShading />
-      </instancedMesh>
-      <gridHelper args={[cols * gap, cols, PALETTE.steel, PALETTE.slate]} position={[0, 0.001, 0]} />
-    </group>
+    <instancedMesh ref={ref} args={[null, null, count]} rotation={[0.18, 0.6, 0]}>
+      <boxGeometry args={[0.16, 0.24, 0.16]} />
+      <meshStandardMaterial roughness={0.5} metalness={0.6} flatShading toneMapped={false} />
+    </instancedMesh>
   )
 }
 
@@ -80,7 +72,7 @@ export default function LedgerScene() {
   return (
     <>
       <ambientLight intensity={0.55} />
-      <directionalLight position={[4, 8, 4]} intensity={1} color={PALETTE.mist} />
+      <directionalLight position={[3, 6, 2]} intensity={1} color={PALETTE.mist} />
       <pointLight position={[-3, 3, 3]} intensity={16} distance={14} color={PALETTE.copper} />
       <Grid />
     </>
