@@ -5,101 +5,113 @@ import DragGroup from '../DragGroup'
 import { PALETTE, roundedBoxGeometry } from '../geo'
 
 /**
- * Product: perangkat vault.
- * Klik untuk membongkar / merapatkan lapisan (exploded view).
- * Setiap lapisan punya jarak sendiri, dianimasikan dengan damp.
+ * Produk: perangkat vault yang tersusun dari 4 lapis.
+ * - Drag memutar perangkat.
+ * - Hover salah satu lapis akan mengangkatnya (exploded view) dan
+ *   memunculkan label lapisan tersebut lewat callback onFocus.
  */
 
 const LAYERS = [
-  { label: 'Shell', y: 0.0, thickness: 0.16, color: PALETTE.slate, offset: 0.0, metalness: 0.9 },
-  { label: 'Secure element', y: 0.0, thickness: 0.09, color: PALETTE.indigo, offset: 0.55, metalness: 0.7 },
-  { label: 'Display', y: 0.0, thickness: 0.05, color: PALETTE.mist, offset: 1.05, metalness: 0.3 },
-  { label: 'Backplate', y: 0.0, thickness: 0.1, color: PALETTE.steel, offset: -0.55, metalness: 0.85 }
+  { key: 'shell',   label: 'Titanium shell',      y: 0.72,  h: 0.16, color: PALETTE.steel,  accent: PALETTE.mist },
+  { key: 'secure',  label: 'Secure element',      y: 0.30,  h: 0.22, color: PALETTE.slate,  accent: PALETTE.teal },
+  { key: 'compute', label: 'Signing co-processor', y: -0.14, h: 0.22, color: PALETTE.indigo, accent: PALETTE.teal },
+  { key: 'power',   label: 'Isolated power rail',  y: -0.58, h: 0.16, color: PALETTE.slate,  accent: PALETTE.amber }
 ]
 
-function Layer({ layer, exploded, index }) {
+function Layer({ layer, index, focused, setFocused }) {
   const ref = useRef()
   const geometry = useMemo(
-    () => roundedBoxGeometry(1.5, 2.4, layer.thickness, 0.22),
-    [layer.thickness]
+    () => roundedBoxGeometry(2.1, layer.h, 1.35, 0.12),
+    [layer.h]
   )
+  const isFocused = focused === layer.key
+  const anyFocused = focused !== null
 
   useFrame((state, delta) => {
     const m = ref.current
     if (!m) return
     const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
-    const target = exploded ? layer.offset : index * 0.001
-    m.position.z = THREE.MathUtils.damp(m.position.z, target, 4, dt)
-    m.rotation.z = THREE.MathUtils.damp(
-      m.rotation.z,
-      exploded ? Math.sin(t * 0.4 + index) * 0.05 : 0,
-      3,
+
+    // saat ada lapis yang di-hover, lapis lain merenggang menjauh
+    const spread = anyFocused ? (index - 1.5) * 0.22 : 0
+    const lift = isFocused ? 0.14 : 0
+    const float = Math.sin(t * 0.6 + index * 0.8) * 0.012
+
+    m.position.y = THREE.MathUtils.damp(m.position.y, layer.y + spread + lift + float, 5, dt)
+    m.position.z = THREE.MathUtils.damp(m.position.z, isFocused ? 0.12 : 0, 5, dt)
+
+    m.material.emissiveIntensity = THREE.MathUtils.damp(
+      m.material.emissiveIntensity,
+      isFocused ? 0.9 : 0.14,
+      6,
       dt
     )
   })
 
   return (
-    <mesh ref={ref} geometry={geometry}>
+    <mesh
+      ref={ref}
+      geometry={geometry}
+      position={[0, layer.y, 0]}
+      onPointerOver={(e) => { e.stopPropagation(); setFocused(layer.key) }}
+      onPointerOut={(e) => { e.stopPropagation(); setFocused(null) }}
+    >
       <meshStandardMaterial
         color={layer.color}
+        emissive={layer.accent}
+        emissiveIntensity={0.14}
         roughness={0.34}
-        metalness={layer.metalness}
-        emissive={PALETTE.indigo}
-        emissiveIntensity={exploded ? 0.28 : 0.1}
+        metalness={0.86}
         flatShading
       />
     </mesh>
   )
 }
 
-function ScreenGlyph({ exploded }) {
+function Frame() {
   const ref = useRef()
   useFrame((state, delta) => {
     if (!ref.current) return
-    const dt = Math.min(delta, 0.05)
-    ref.current.position.z = THREE.MathUtils.damp(ref.current.position.z, exploded ? 1.14 : 0.09, 4, dt)
-    ref.current.rotation.z += dt * 0.5
+    ref.current.rotation.y += Math.min(delta, 0.05) * 0.15
   })
   return (
-    <mesh ref={ref} position={[0, 0.35, 0.09]}>
-      <torusGeometry args={[0.3, 0.035, 3, 6]} />
-      <meshStandardMaterial
-        color={PALETTE.teal}
-        emissive={PALETTE.teal}
-        emissiveIntensity={1.2}
-        roughness={0.2}
-        metalness={0.5}
-        flatShading
-      />
-    </mesh>
+    <group ref={ref}>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -1.05, 0]}>
+        <torusGeometry args={[1.6, 0.008, 3, 6]} />
+        <meshBasicMaterial color={PALETTE.steel} transparent opacity={0.45} />
+      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 1.15, 0]}>
+        <torusGeometry args={[1.35, 0.008, 3, 6]} />
+        <meshBasicMaterial color={PALETTE.indigo} transparent opacity={0.4} />
+      </mesh>
+    </group>
   )
 }
 
-export default function VaultDevice() {
-  const [exploded, setExploded] = useState(false)
+export default function VaultDevice({ onFocus }) {
+  const [focused, setFocusedState] = useState(null)
+
+  const setFocused = (key) => {
+    setFocusedState(key)
+    onFocus?.(key ? LAYERS.find((l) => l.key === key) : null)
+  }
 
   return (
     <>
       <ambientLight intensity={0.5} />
       <directionalLight position={[3, 5, 4]} intensity={1.15} color={PALETTE.mist} />
       <directionalLight position={[-4, -1, -2]} intensity={0.45} color={PALETTE.indigo} />
-      <pointLight position={[0, 0.5, 3]} intensity={10} color={PALETTE.amber} distance={9} />
+      <spotLight position={[0, 4, 3]} angle={0.6} penumbra={1} intensity={12} color={PALETTE.teal} distance={14} />
 
-      <DragGroup autoSpin={0.6} parallax={0.55} scale={0.95}>
-        <group onClick={(e) => { e.stopPropagation(); setExploded((v) => !v) }}>
-          {LAYERS.map((layer, i) => (
-            <Layer key={layer.label} layer={layer} index={i} exploded={exploded} />
-          ))}
-          <ScreenGlyph exploded={exploded} />
-
-          {/* bingkai wireframe untuk kesan teknis */}
-          <mesh scale={[1.08, 1.05, 1]}>
-            <boxGeometry args={[1.5, 2.4, 0.5]} />
-            <meshBasicMaterial color={PALETTE.steel} wireframe transparent opacity={0.14} />
-          </mesh>
-        </group>
+      <DragGroup autoSpin={0.45} parallax={0.5} scale={1.05}>
+        {LAYERS.map((layer, i) => (
+          <Layer key={layer.key} layer={layer} index={i} focused={focused} setFocused={setFocused} />
+        ))}
+        <Frame />
       </DragGroup>
     </>
   )
 }
+
+export { LAYERS }
