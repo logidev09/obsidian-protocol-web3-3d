@@ -5,98 +5,103 @@ import DragGroup from './DragGroup'
 import { PALETTE } from './geo'
 
 /**
- * SECTION 2 - perangkat vault fisik.
- * Klik untuk exploded view: lapisan casing, papan, dan elemen aman
- * memisah lalu menyatu lagi. Drag memutar perangkatnya.
+ * SECTION 2 - perangkat vault.
+ * Tiga lapis bodi yang "meledak" terpisah saat di-hover / diklik,
+ * plus label titik yang menyala mengikuti lapisan aktif.
  */
 
 const LAYERS = [
-  { y: 0.62, size: [2.5, 0.12, 1.55], color: PALETTE.steel, label: 'shell' },
-  { y: 0.3, size: [2.35, 0.1, 1.42], color: PALETTE.slate, label: 'board' },
-  { y: 0.0, size: [2.2, 0.16, 1.32], color: PALETTE.carbon, label: 'secure element' },
-  { y: -0.3, size: [2.35, 0.1, 1.42], color: PALETTE.slate, label: 'battery' },
-  { y: -0.62, size: [2.5, 0.12, 1.55], color: PALETTE.steel, label: 'base' }
+  { key: 'shell', y: 0.62, label: 'Titanium shell', color: PALETTE.slate },
+  { key: 'board', y: 0, label: 'Secure element', color: PALETTE.carbon },
+  { key: 'base', y: -0.62, label: 'Air-gap base', color: PALETTE.slate }
 ]
 
-function Layer({ spec, index, open, hot }) {
+function Layer({ layer, index, exploded, active, onHover }) {
   const ref = useRef()
-  const edges = useMemo(
-    () => new THREE.EdgesGeometry(new THREE.BoxGeometry(...spec.size)),
-    [spec.size]
-  )
+  const isActive = active === layer.key
 
   useFrame((frame, delta) => {
     if (!ref.current) return
     const dt = Math.min(delta, 0.05)
-    const target = open ? spec.y * 2.6 : spec.y
-    const drift = open ? Math.sin(frame.clock.elapsedTime * 0.8 + index) * 0.02 : 0
-    ref.current.position.y = THREE.MathUtils.damp(ref.current.position.y, target + drift, 5, dt)
-  })
-
-  const isCore = index === 2
-
-  return (
-    <group ref={ref} position={[0, spec.y, 0]}>
-      <mesh castShadow={false}>
-        <boxGeometry args={spec.size} />
-        <meshStandardMaterial
-          color={spec.color}
-          emissive={isCore ? PALETTE.teal : PALETTE.indigo}
-          emissiveIntensity={isCore ? (hot ? 0.55 : 0.3) : 0.06}
-          roughness={isCore ? 0.3 : 0.55}
-          metalness={0.88}
-          flatShading
-        />
-      </mesh>
-      <lineSegments geometry={edges}>
-        <lineBasicMaterial
-          color={isCore ? PALETTE.teal : PALETTE.mist}
-          transparent
-          opacity={isCore ? 0.5 : 0.16}
-        />
-      </lineSegments>
-    </group>
-  )
-}
-
-function Device() {
-  const [open, setOpen] = useState(false)
-  const [hot, setHot] = useState(false)
-  const halo = useRef()
-
-  useFrame((frame, delta) => {
-    if (!halo.current) return
-    const dt = Math.min(delta, 0.05)
-    halo.current.rotation.y += dt * 0.25
-    halo.current.material.opacity = THREE.MathUtils.damp(
-      halo.current.material.opacity,
-      open ? 0.4 : 0.14,
+    const spread = exploded ? 1 : 0.34
+    const targetY = layer.y * spread + (isActive ? 0.06 : 0)
+    ref.current.position.y = THREE.MathUtils.damp(ref.current.position.y, targetY, 6, dt)
+    ref.current.rotation.y = THREE.MathUtils.damp(
+      ref.current.rotation.y,
+      exploded ? index * 0.12 : 0,
       4,
       dt
     )
   })
 
   return (
-    <DragGroup autoSpin={0.22} parallax={0.5} maxPitch={0.45}>
-      <group
+    <group ref={ref}>
+      <mesh
+        castShadow
         onPointerOver={(e) => {
           e.stopPropagation()
-          setHot(true)
+          onHover(layer.key)
         }}
-        onPointerOut={() => setHot(false)}
+        onPointerOut={() => onHover(null)}
+      >
+        <boxGeometry args={[2.4, 0.42, 1.5]} />
+        <meshStandardMaterial
+          color={layer.color}
+          emissive={isActive ? PALETTE.teal : PALETTE.ink}
+          emissiveIntensity={isActive ? 0.5 : 0.08}
+          roughness={0.36}
+          metalness={0.88}
+        />
+      </mesh>
+
+      {/* garis tepi tegas khas render produk */}
+      <lineSegments>
+        <edgesGeometry args={[new THREE.BoxGeometry(2.4, 0.42, 1.5)]} />
+        <lineBasicMaterial color={PALETTE.mist} transparent opacity={isActive ? 0.6 : 0.22} />
+      </lineSegments>
+
+      {layer.key === 'board' && (
+        <mesh position={[0, 0.23, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[1.5, 0.9]} />
+          <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.3} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
+function Device() {
+  const [active, setActive] = useState(null)
+  const [exploded, setExploded] = useState(false)
+  const ringRef = useRef()
+
+  useFrame((frame, delta) => {
+    if (ringRef.current) ringRef.current.rotation.z += Math.min(delta, 0.05) * 0.15
+  })
+
+  return (
+    <DragGroup autoSpin={0.22} parallax={0.7} maxPitch={0.42}>
+      <group
         onClick={(e) => {
           e.stopPropagation()
-          setOpen((v) => !v)
+          setExploded((v) => !v)
         }}
       >
-        {LAYERS.map((spec, i) => (
-          <Layer key={spec.label} spec={spec} index={i} open={open} hot={hot} />
+        {LAYERS.map((layer, i) => (
+          <Layer
+            key={layer.key}
+            layer={layer}
+            index={i}
+            exploded={exploded || active !== null}
+            active={active}
+            onHover={setActive}
+          />
         ))}
       </group>
 
-      <mesh ref={halo} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.4, 0]}>
-        <ringGeometry args={[1.9, 2.05, 6]} />
-        <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.14} side={THREE.DoubleSide} />
+      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.5, 0]}>
+        <ringGeometry args={[1.9, 1.94, 6]} />
+        <meshBasicMaterial color={PALETTE.copper} transparent opacity={0.4} side={THREE.DoubleSide} />
       </mesh>
     </DragGroup>
   )
@@ -105,10 +110,10 @@ function Device() {
 export default function ProductScene() {
   return (
     <>
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[3, 5, 4]} intensity={1.1} color={PALETTE.mist} />
-      <pointLight position={[-4, 2, 3]} intensity={18} distance={16} color={PALETTE.teal} />
-      <pointLight position={[3, -2, -3]} intensity={14} distance={14} color={PALETTE.copper} />
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[3, 6, 4]} intensity={1.3} color={PALETTE.mist} />
+      <spotLight position={[-4, 5, 2]} angle={0.5} penumbra={0.8} intensity={40} color={PALETTE.indigo} />
+      <pointLight position={[0, -3, 3]} intensity={14} distance={14} color={PALETTE.teal} />
       <Device />
     </>
   )
