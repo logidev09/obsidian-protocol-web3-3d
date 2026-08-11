@@ -1,45 +1,64 @@
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
+import { getPerfProfile } from './geo'
 
 /**
- * Canvas hemat daya:
- * - hanya me-render saat section-nya terlihat di viewport
- * - dpr dibatasi agar layar retina tidak membakar GPU
- * - menghormati prefers-reduced-motion
- * Ini yang menjaga scroll tetap mulus meski ada 4 scene 3D.
+ * Canvas yang hemat: baru dipasang saat mendekati viewport, dan
+ * render-loop-nya berhenti total saat section keluar layar.
+ * Ini yang menjaga scroll tetap ringan walau ada 4 scene 3D.
+ *
+ * touchAction: 'pan-y' → di layar sentuh, swipe vertikal tetap men-scroll
+ * halaman, bukan tertahan canvas.
  */
-export default function LazyCanvas({
-  children,
-  camera = { position: [0, 0, 7], fov: 42 },
-  className = '',
-  ...rest
-}) {
-  const host = useRef(null)
-  const [visible, setVisible] = useState(false)
+export default function LazyCanvas({ children, camera, className = '' }) {
+  const holder = useRef(null)
   const [mounted, setMounted] = useState(false)
+  const [active, setActive] = useState(false)
+  const [dpr] = useState(() => getPerfProfile().dpr)
 
   useEffect(() => {
-    const el = host.current
+    const el = holder.current
     if (!el) return
-    const io = new IntersectionObserver(
+
+    const mountObserver = new IntersectionObserver(
       ([entry]) => {
-        setVisible(entry.isIntersecting)
-        if (entry.isIntersecting) setMounted(true)
+        if (entry.isIntersecting) {
+          setMounted(true)
+          mountObserver.disconnect()
+        }
       },
-      { rootMargin: '200px 0px', threshold: 0.01 }
+      { rootMargin: '400px 0px' }
     )
-    io.observe(el)
-    return () => io.disconnect()
+
+    const activeObserver = new IntersectionObserver(
+      ([entry]) => setActive(entry.isIntersecting),
+      { threshold: 0.05 }
+    )
+
+    mountObserver.observe(el)
+    activeObserver.observe(el)
+
+    const onVisibility = () => {
+      if (document.hidden) setActive(false)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      mountObserver.disconnect()
+      activeObserver.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [])
 
   return (
-    <div ref={host} className={`canvas-host ${className}`} {...rest}>
+    <div ref={holder} className={`canvas-holder ${className}`}>
       {mounted && (
         <Canvas
-          frameloop={visible ? 'always' : 'demand'}
-          camera={camera}
-          dpr={[1, 1.75]}
-          gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+          dpr={dpr}
+          frameloop={active ? 'always' : 'never'}
+          gl={{ antialias: true, powerPreference: 'high-performance', alpha: true }}
+          camera={camera || { position: [0, 0, 7], fov: 42 }}
+          style={{ touchAction: 'pan-y' }}
         >
           <Suspense fallback={null}>{children}</Suspense>
         </Canvas>
