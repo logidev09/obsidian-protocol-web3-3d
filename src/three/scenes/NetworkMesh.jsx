@@ -1,140 +1,161 @@
 import { useMemo, useRef, useState } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from '../DragGroup'
 import { PALETTE, fibonacciSphere } from '../geo'
 
 /**
  * Network: mesh validator berbentuk bola.
- * - Hover sebuah node → node membesar, tetangganya ikut menyala (paket lewat)
- * - Drag → memutar bola
- * Semua node dirender lewat satu InstancedMesh → ratusan node, satu draw call.
+ * - Node terdekat saling terhubung garis (dihitung sekali, bukan tiap frame)
+ * - Klik node → node terkunci menyala dan mengirim "pulsa" ke tetangganya
+ * - Drag → memutar seluruh jaringan
  */
-const NODE_COUNT = 96
-const RADIUS = 2.1
 
-function Mesh({ onFocus }) {
-  const instRef = useRef()
-  const linesRef = useRef()
-  const [hovered, setHovered] = useState(-1)
+const NODE_COUNT = 42
+const LINK_DISTANCE = 1.15
 
-  const { nodes, links, linkGeo } = useMemo(() => {
-    const nodes = fibonacciSphere(NODE_COUNT, RADIUS)
-    const links = []
-    const pts = []
-    // sambungkan tiap node ke 2 tetangga terdekat — cukup untuk kesan mesh
-    nodes.forEach((a, i) => {
-      const near = nodes
-        .map((b, j) => ({ j, d: a.distanceTo(b) }))
-        .filter((x) => x.j !== i)
-        .sort((x, y) => x.d - y.d)
-        .slice(0, 2)
-      near.forEach(({ j }) => {
-        if (i < j) {
-          links.push([i, j])
-          pts.push(a.clone(), nodes[j].clone())
-        }
-      })
-    })
-    const linkGeo = new THREE.BufferGeometry().setFromPoints(pts)
-    return { nodes, links, linkGeo }
-  }, [])
+function Node({ position, index, active, onSelect }) {
+  const ref = useRef()
+  const [hovered, setHovered] = useState(false)
 
-  const neighbours = useMemo(() => {
-    const map = new Map()
-    links.forEach(([a, b]) => {
-      if (!map.has(a)) map.set(a, [])
-      if (!map.has(b)) map.set(b, [])
-      map.get(a).push(b)
-      map.get(b).push(a)
-    })
-    return map
-  }, [links])
-
-  const dummy = useMemo(() => new THREE.Object3D(), [])
-  const colorA = useMemo(() => new THREE.Color(PALETTE.mist), [])
-  const colorB = useMemo(() => new THREE.Color(PALETTE.teal), [])
-  const colorC = useMemo(() => new THREE.Color(PALETTE.indigo), [])
-  const tmp = useMemo(() => new THREE.Color(), [])
-
-  useFrame((frame) => {
-    const inst = instRef.current
-    if (!inst) return
+  useFrame((frame, delta) => {
+    const m = ref.current
+    if (!m) return
+    const dt = Math.min(delta, 0.05)
     const t = frame.clock.elapsedTime
-    const active = neighbours.get(hovered) ?? []
-
-    nodes.forEach((p, i) => {
-      const isHover = i === hovered
-      const isNear = active.includes(i)
-      const pulse = 1 + Math.sin(t * 1.6 + i * 0.7) * 0.08
-      const s = (isHover ? 2.6 : isNear ? 1.7 : 1) * 0.055 * pulse
-      dummy.position.copy(p)
-      dummy.scale.setScalar(s)
-      dummy.rotation.set(t * 0.2 + i, t * 0.15 + i, 0)
-      dummy.updateMatrix()
-      inst.setMatrixAt(i, dummy.matrix)
-      tmp.copy(isHover ? colorB : isNear ? colorC : colorA)
-      inst.setColorAt(i, tmp)
-    })
-
-    inst.instanceMatrix.needsUpdate = true
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true
-
-    if (linesRef.current) {
-      linesRef.current.material.opacity = 0.12 + (hovered >= 0 ? 0.14 : 0) + Math.sin(t * 0.9) * 0.03
-    }
+    const base = active ? 1.9 : hovered ? 1.5 : 1
+    const breathe = 1 + Math.sin(t * 1.6 + index) * 0.06
+    m.scale.setScalar(THREE.MathUtils.damp(m.scale.x, base * breathe, 7, dt))
+    m.material.emissiveIntensity = THREE.MathUtils.damp(
+      m.material.emissiveIntensity,
+      active ? 1.6 : hovered ? 0.9 : 0.25,
+      7,
+      dt
+    )
   })
 
   return (
-    <group>
-      <instancedMesh
-        ref={instRef}
-        args={[undefined, undefined, NODE_COUNT]}
-        onPointerMove={(e) => {
-          e.stopPropagation()
-          if (e.instanceId !== hovered) {
-            setHovered(e.instanceId ?? -1)
-            onFocus?.(e.instanceId ?? -1)
-          }
-        }}
-        onPointerOut={() => {
-          setHovered(-1)
-          onFocus?.(-1)
-        }}
-      >
-        <octahedronGeometry args={[1, 0]} />
-        <meshStandardMaterial
-          roughness={0.35}
-          metalness={0.7}
-          emissiveIntensity={0.4}
-          flatShading
-          toneMapped={false}
-        />
-      </instancedMesh>
-
-      <lineSegments ref={linesRef} geometry={linkGeo}>
-        <lineBasicMaterial color={PALETTE.steel} transparent opacity={0.16} />
-      </lineSegments>
-
-      {/* cangkang tipis untuk memberi volume */}
-      <mesh>
-        <icosahedronGeometry args={[RADIUS * 0.99, 2]} />
-        <meshBasicMaterial color={PALETTE.slate} transparent opacity={0.06} />
-      </mesh>
-    </group>
+    <mesh
+      ref={ref}
+      position={position}
+      onPointerOver={(e) => {
+        e.stopPropagation()
+        setHovered(true)
+      }}
+      onPointerOut={() => setHovered(false)}
+      onClick={(e) => {
+        e.stopPropagation()
+        onSelect(index)
+      }}
+    >
+      <octahedronGeometry args={[0.075, 0]} />
+      <meshStandardMaterial
+        color={active ? PALETTE.teal : PALETTE.mist}
+        emissive={active ? PALETTE.teal : PALETTE.indigo}
+        emissiveIntensity={0.25}
+        roughness={0.3}
+        metalness={0.7}
+        flatShading
+      />
+    </mesh>
   )
 }
 
-export default function NetworkMesh({ onFocus }) {
-  const { size } = useThree?.() ?? { size: null }
+function Links({ nodes, pairs, activeIndex }) {
+  const ref = useRef()
+
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(pairs.length * 6)
+    pairs.forEach(([a, b], i) => {
+      nodes[a].toArray(positions, i * 6)
+      nodes[b].toArray(positions, i * 6 + 3)
+    })
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    return g
+  }, [nodes, pairs])
+
+  useFrame((frame, delta) => {
+    if (!ref.current) return
+    const target = activeIndex === null ? 0.16 : 0.3
+    ref.current.material.opacity = THREE.MathUtils.damp(
+      ref.current.material.opacity,
+      target,
+      5,
+      Math.min(delta, 0.05)
+    )
+  })
+
+  return (
+    <lineSegments ref={ref} geometry={geometry}>
+      <lineBasicMaterial color={PALETTE.steel} transparent opacity={0.16} />
+    </lineSegments>
+  )
+}
+
+function Pulse({ from, to }) {
+  const ref = useRef()
+  const progress = useRef(0)
+
+  useFrame((_, delta) => {
+    if (!ref.current) return
+    progress.current = (progress.current + delta * 0.8) % 1
+    ref.current.position.lerpVectors(from, to, progress.current)
+    const fade = Math.sin(progress.current * Math.PI)
+    ref.current.material.opacity = fade
+    ref.current.scale.setScalar(0.5 + fade * 0.8)
+  })
+
+  return (
+    <mesh ref={ref}>
+      <sphereGeometry args={[0.045, 8, 8]} />
+      <meshBasicMaterial color={PALETTE.teal} transparent opacity={0} toneMapped={false} />
+    </mesh>
+  )
+}
+
+export default function NetworkMesh() {
+  const [active, setActive] = useState(null)
+
+  const nodes = useMemo(() => fibonacciSphere(NODE_COUNT, 2.1), [])
+
+  const pairs = useMemo(() => {
+    const list = []
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        if (nodes[i].distanceTo(nodes[j]) < LINK_DISTANCE) list.push([i, j])
+      }
+    }
+    return list
+  }, [nodes])
+
+  const pulses = useMemo(() => {
+    if (active === null) return []
+    return pairs
+      .filter(([a, b]) => a === active || b === active)
+      .slice(0, 6)
+      .map(([a, b]) => (a === active ? [nodes[a], nodes[b]] : [nodes[b], nodes[a]]))
+  }, [active, pairs, nodes])
+
   return (
     <>
-      <ambientLight intensity={0.5} />
+      <ambientLight intensity={0.55} />
       <directionalLight position={[3, 4, 5]} intensity={0.9} color={PALETTE.mist} />
-      <pointLight position={[-4, 0, 3]} intensity={16} color={PALETTE.indigo} distance={14} />
+      <pointLight position={[-4, 2, 3]} intensity={16} color={PALETTE.indigo} distance={14} />
 
-      <DragGroup autoSpin={1} parallax={0.3} scale={size && size.width < 640 ? 0.85 : 1}>
-        <Mesh onFocus={onFocus} />
+      <DragGroup autoSpin={0.85} parallax={0.45}>
+        <Links nodes={nodes} pairs={pairs} activeIndex={active} />
+        {nodes.map((p, i) => (
+          <Node key={i} index={i} position={p} active={active === i} onSelect={setActive} />
+        ))}
+        {pulses.map(([from, to], i) => (
+          <Pulse key={`${active}-${i}`} from={from} to={to} />
+        ))}
+
+        <mesh>
+          <icosahedronGeometry args={[2.08, 1]} />
+          <meshBasicMaterial color={PALETTE.slate} transparent opacity={0.07} wireframe />
+        </mesh>
       </DragGroup>
     </>
   )
