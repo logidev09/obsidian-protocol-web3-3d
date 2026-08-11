@@ -2,155 +2,152 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from './DragGroup'
-import { PALETTE, fibonacciSphere } from './geo'
+import { PALETTE, getPerfProfile, randomInBox } from './geo'
 
 /**
- * HERO — inti kristal ikosahedral.
- * Interaksi: drag memutar, hover memicu "fracture" (shell pecah menjauh),
- * pointer juga menggeser highlight rim light.
+ * SECTION 1 - artefak inti.
+ * Icosahedron low-poly + cangkang wireframe + pecahan yang mengorbit.
+ * Hover memisahkan cangkang, drag memutar seluruh rakitan.
  */
 
-function CoreCrystal() {
-  const inner = useRef()
-  const shell = useRef()
-  const [hot, setHot] = useState(false)
+function Shard({ radius, speed, offset, tilt, hot }) {
+  const ref = useRef()
 
-  const geo = useMemo(() => new THREE.IcosahedronGeometry(1.35, 0), [])
-  const shellGeo = useMemo(() => new THREE.IcosahedronGeometry(1.9, 1), [])
-
-  // simpan posisi asli tiap vertex shell untuk efek fracture
-  const base = useMemo(() => shellGeo.attributes.position.array.slice(), [shellGeo])
-
-  useFrame((state, delta) => {
+  useFrame((frame, delta) => {
+    if (!ref.current) return
+    const t = frame.clock.elapsedTime * speed + offset
     const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
-
-    inner.current.rotation.x += dt * 0.25
-    inner.current.rotation.z -= dt * 0.18
-
-    const target = hot ? 1 : 0
-    shell.current.userData.k = THREE.MathUtils.damp(
-      shell.current.userData.k ?? 0,
-      target,
-      3.5,
-      dt
-    )
-    const k = shell.current.userData.k
-
-    const pos = shell.current.geometry.attributes.position
-    for (let i = 0; i < pos.count; i++) {
-      const ix = i * 3
-      const bx = base[ix]
-      const by = base[ix + 1]
-      const bz = base[ix + 2]
-      const wobble = Math.sin(t * 1.4 + i * 0.35) * 0.05
-      const push = 1 + k * 0.28 + wobble * (0.4 + k)
-      pos.array[ix] = bx * push
-      pos.array[ix + 1] = by * push
-      pos.array[ix + 2] = bz * push
-    }
-    pos.needsUpdate = true
-    shell.current.rotation.y += dt * 0.08
+    const r = hot ? radius * 1.18 : radius
+    ref.current.position.set(Math.cos(t) * r, Math.sin(t * 0.7) * 0.5, Math.sin(t) * r)
+    ref.current.rotation.x += dt * 0.6
+    ref.current.rotation.y += dt * 0.4
   })
 
   return (
-    <group
-      onPointerOver={() => setHot(true)}
-      onPointerOut={() => setHot(false)}
-    >
-      <mesh ref={inner} geometry={geo}>
-        <meshStandardMaterial
-          color={PALETTE.steel}
-          metalness={0.85}
-          roughness={0.22}
-          emissive={PALETTE.teal}
-          emissiveIntensity={hot ? 0.5 : 0.22}
-          flatShading
-        />
-      </mesh>
-
-      <mesh ref={shell} geometry={shellGeo}>
-        <meshBasicMaterial
-          color={hot ? PALETTE.teal : PALETTE.indigo}
-          wireframe
-          transparent
-          opacity={0.32}
-        />
-      </mesh>
-    </group>
+    <mesh ref={ref} rotation={[tilt, 0, 0]}>
+      <tetrahedronGeometry args={[0.18, 0]} />
+      <meshStandardMaterial
+        color={PALETTE.steel}
+        emissive={hot ? PALETTE.copper : PALETTE.teal}
+        emissiveIntensity={hot ? 0.8 : 0.35}
+        roughness={0.35}
+        metalness={0.9}
+        flatShading
+      />
+    </mesh>
   )
 }
 
-function OrbitField({ count = 90 }) {
+function Dust() {
   const ref = useRef()
-  const points = useMemo(() => fibonacciSphere(count, 3.1), [count])
+  const { low } = useMemo(getPerfProfile, [])
+  const count = low ? 140 : 340
+  const positions = useMemo(() => randomInBox(count, 14), [count])
 
-  const geometry = useMemo(() => {
-    const g = new THREE.BufferGeometry()
-    const arr = new Float32Array(points.length * 3)
-    points.forEach((p, i) => {
-      arr[i * 3] = p.x
-      arr[i * 3 + 1] = p.y
-      arr[i * 3 + 2] = p.z
-    })
-    g.setAttribute('position', new THREE.BufferAttribute(arr, 3))
-    return g
-  }, [points])
-
-  useFrame((state, delta) => {
-    ref.current.rotation.y += delta * 0.06
-    ref.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.2) * 0.15
+  useFrame((frame, delta) => {
+    if (!ref.current) return
+    ref.current.rotation.y += Math.min(delta, 0.05) * 0.03
+    ref.current.rotation.x = frame.pointer.y * 0.05
   })
 
   return (
-    <points ref={ref} geometry={geometry}>
-      <pointsMaterial
-        size={0.045}
-        color={PALETTE.slate}
-        transparent
-        opacity={0.7}
-        sizeAttenuation
-      />
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial size={0.026} color={PALETTE.steel} transparent opacity={0.55} sizeAttenuation />
     </points>
   )
 }
 
-function Rings() {
-  const a = useRef()
-  const b = useRef()
+function Artifact() {
+  const [hot, setHot] = useState(false)
+  const core = useRef()
+  const shell = useRef()
 
-  useFrame((state, delta) => {
-    a.current.rotation.z += delta * 0.12
-    b.current.rotation.z -= delta * 0.09
+  const shellGeo = useMemo(() => new THREE.IcosahedronGeometry(2.1, 1), [])
+  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.35, 0)), [])
+
+  useFrame((frame, delta) => {
+    const dt = Math.min(delta, 0.05)
+    const t = frame.clock.elapsedTime
+
+    if (core.current) {
+      const pulse = 1 + Math.sin(t * 1.4) * 0.015
+      const s = THREE.MathUtils.damp(core.current.scale.x, (hot ? 1.06 : 1) * pulse, 5, dt)
+      core.current.scale.setScalar(s)
+    }
+    if (shell.current) {
+      shell.current.rotation.y -= dt * 0.12
+      shell.current.rotation.z += dt * 0.04
+      const s = THREE.MathUtils.damp(shell.current.scale.x, hot ? 1.12 : 1, 4, dt)
+      shell.current.scale.setScalar(s)
+      shell.current.material.opacity = THREE.MathUtils.damp(
+        shell.current.material.opacity,
+        hot ? 0.3 : 0.14,
+        4,
+        dt
+      )
+    }
   })
 
   return (
-    <group>
-      <mesh ref={a} rotation={[Math.PI / 2.4, 0, 0]}>
-        <torusGeometry args={[2.5, 0.012, 3, 96]} />
-        <meshBasicMaterial color={PALETTE.violet} transparent opacity={0.5} />
+    <DragGroup autoSpin={0.18} parallax={1} maxPitch={0.55}>
+      <mesh
+        ref={core}
+        onPointerOver={(e) => {
+          e.stopPropagation()
+          setHot(true)
+        }}
+        onPointerOut={() => setHot(false)}
+      >
+        <icosahedronGeometry args={[1.35, 0]} />
+        <meshStandardMaterial
+          color={PALETTE.carbon}
+          emissive={PALETTE.teal}
+          emissiveIntensity={hot ? 0.42 : 0.2}
+          roughness={0.22}
+          metalness={0.95}
+          flatShading
+        />
       </mesh>
-      <mesh ref={b} rotation={[Math.PI / 1.7, 0.4, 0]}>
-        <torusGeometry args={[2.9, 0.01, 3, 96]} />
-        <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.35} />
+
+      <lineSegments geometry={edges}>
+        <lineBasicMaterial color={PALETTE.mist} transparent opacity={0.35} />
+      </lineSegments>
+
+      <mesh ref={shell} geometry={shellGeo}>
+        <meshBasicMaterial color={PALETTE.indigo} wireframe transparent opacity={0.14} />
       </mesh>
-    </group>
+
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <Shard
+          key={i}
+          radius={2.7 + (i % 3) * 0.35}
+          speed={0.28 + i * 0.045}
+          offset={(i / 6) * Math.PI * 2}
+          tilt={i * 0.4}
+          hot={hot}
+        />
+      ))}
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.3, 0]}>
+        <ringGeometry args={[2.6, 2.68, 64]} />
+        <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.18} side={THREE.DoubleSide} />
+      </mesh>
+    </DragGroup>
   )
 }
 
 export default function HeroScene() {
   return (
     <>
-      <ambientLight intensity={0.35} />
-      <directionalLight position={[4, 6, 5]} intensity={1.1} color={PALETTE.slate} />
-      <pointLight position={[-5, -2, 3]} intensity={18} distance={14} color={PALETTE.indigo} />
-      <pointLight position={[3, 2, -4]} intensity={12} distance={12} color={PALETTE.teal} />
-
-      <DragGroup autoSpin={0.18} parallax={0.22}>
-        <CoreCrystal />
-        <Rings />
-        <OrbitField />
-      </DragGroup>
+      <ambientLight intensity={0.45} />
+      <directionalLight position={[4, 6, 5]} intensity={1.15} color={PALETTE.mist} />
+      <pointLight position={[-5, -2, 3]} intensity={26} distance={20} color={PALETTE.indigo} />
+      <pointLight position={[4, 3, -4]} intensity={18} distance={18} color={PALETTE.copper} />
+      <Dust />
+      <Artifact />
     </>
   )
 }
