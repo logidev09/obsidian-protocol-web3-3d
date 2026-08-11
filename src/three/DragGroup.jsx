@@ -1,136 +1,90 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { damp } from './geo'
 
 /**
- * Group yang bisa diputar dengan drag mouse, punya inersia, auto-spin lembut,
- * dan parallax mengikuti pointer.
+ * Bungkus objek 3D supaya bisa:
+ *  - di-drag dengan mouse / sentuh (rotasi bebas, dengan inersia)
+ *  - ikut bergerak halus mengikuti posisi pointer (parallax)
+ *  - berputar pelan sendiri saat idle
  *
- * Catatan scroll: di perangkat sentuh, drag hanya diambil alih setelah gerakan
- * jelas horizontal. Gestur vertikal selalu diteruskan ke halaman, jadi scroll
- * tetap nyaman dan tidak pernah "tersangkut" di dalam canvas.
+ * Drag di-handle di level window, bukan OrbitControls, supaya scroll halaman
+ * tidak pernah terkunci oleh canvas.
  */
 export default function DragGroup({
   children,
-  autoSpin = 0.15,
-  sensitivity = 0.006,
-  parallax = 0.12,
-  clampX = 0.85,
+  autoSpin = 0.1,
+  parallax = 0.14,
+  clampX = 0.9,
   damping = 0.94
 }) {
   const group = useRef()
-  const { gl } = useThree()
+  const drag = useRef({ active: false, lastX: 0, lastY: 0 })
+  const velocity = useRef({ x: 0, y: 0 })
+  const rotation = useRef({ x: 0, y: 0 })
+  const { gl, pointer } = useThree()
 
-  const state = useRef({
-    dragging: false,
-    pointerId: null,
-    lastX: 0,
-    lastY: 0,
-    startX: 0,
-    startY: 0,
-    axisLocked: false,
-    velX: 0,
-    velY: 0,
-    rotX: 0,
-    rotY: 0,
-    parX: 0,
-    parY: 0
-  })
+  const start = (e) => {
+    e.stopPropagation()
+    drag.current.active = true
+    drag.current.lastX = e.clientX
+    drag.current.lastY = e.clientY
+    gl.domElement.style.cursor = 'grabbing'
 
-  useEffect(() => {
-    const el = gl.domElement
-    const s = state.current
-
-    const down = (e) => {
-      if (e.pointerType === 'touch') {
-        s.axisLocked = false
-      } else {
-        s.dragging = true
-        s.axisLocked = true
-        el.setPointerCapture?.(e.pointerId)
-        el.style.cursor = 'grabbing'
-      }
-      s.pointerId = e.pointerId
-      s.startX = s.lastX = e.clientX
-      s.startY = s.lastY = e.clientY
+    const move = (ev) => {
+      if (!drag.current.active) return
+      const dx = ev.clientX - drag.current.lastX
+      const dy = ev.clientY - drag.current.lastY
+      drag.current.lastX = ev.clientX
+      drag.current.lastY = ev.clientY
+      velocity.current.y = dx * 0.006
+      velocity.current.x = dy * 0.006
+      rotation.current.y += velocity.current.y
+      rotation.current.x = Math.max(
+        -clampX,
+        Math.min(clampX, rotation.current.x + velocity.current.x)
+      )
     }
 
-    const move = (e) => {
-      if (s.pointerId !== e.pointerId) return
-
-      if (!s.axisLocked && e.pointerType === 'touch') {
-        const dx = Math.abs(e.clientX - s.startX)
-        const dy = Math.abs(e.clientY - s.startY)
-        if (dx < 8 && dy < 8) return
-        // Gerakan dominan vertikal = niat scroll. Lepaskan ke halaman.
-        if (dy >= dx) {
-          s.pointerId = null
-          return
-        }
-        s.axisLocked = true
-        s.dragging = true
-      }
-
-      if (!s.dragging) return
-
-      const dx = e.clientX - s.lastX
-      const dy = e.clientY - s.lastY
-      s.lastX = e.clientX
-      s.lastY = e.clientY
-
-      s.velY = dx * sensitivity
-      s.velX = dy * sensitivity
-      s.rotY += s.velY
-      s.rotX = Math.max(-clampX, Math.min(clampX, s.rotX + s.velX))
-
-      if (e.pointerType === 'touch') e.preventDefault()
+    const end = () => {
+      drag.current.active = false
+      gl.domElement.style.cursor = ''
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
     }
 
-    const up = (e) => {
-      if (s.pointerId !== e.pointerId) return
-      s.dragging = false
-      s.axisLocked = false
-      s.pointerId = null
-      el.releasePointerCapture?.(e.pointerId)
-      el.style.cursor = ''
-    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+  }
 
-    el.style.touchAction = 'pan-y'
-    el.addEventListener('pointerdown', down)
-    el.addEventListener('pointermove', move, { passive: false })
-    el.addEventListener('pointerup', up)
-    el.addEventListener('pointercancel', up)
-    el.addEventListener('pointerleave', up)
-
-    return () => {
-      el.removeEventListener('pointerdown', down)
-      el.removeEventListener('pointermove', move)
-      el.removeEventListener('pointerup', up)
-      el.removeEventListener('pointercancel', up)
-      el.removeEventListener('pointerleave', up)
-    }
-  }, [gl, sensitivity, clampX])
-
-  useFrame(({ pointer }, dt) => {
-    const s = state.current
+  useFrame((state, delta) => {
+    const dt = Math.min(delta, 0.05)
     const g = group.current
     if (!g) return
 
-    const step = Math.min(dt, 0.05)
-
-    if (!s.dragging) {
-      s.velY *= damping
-      s.velX *= damping
-      s.rotY += s.velY + autoSpin * step
-      s.rotX = Math.max(-clampX, Math.min(clampX, s.rotX + s.velX))
+    if (!drag.current.active) {
+      velocity.current.x *= damping
+      velocity.current.y *= damping
+      rotation.current.y += velocity.current.y + autoSpin * dt
+      rotation.current.x = Math.max(
+        -clampX,
+        Math.min(clampX, rotation.current.x + velocity.current.x)
+      )
+      // kembali perlahan ke sumbu horizontal saat dilepas
+      rotation.current.x = damp(rotation.current.x, 0, 1.1, dt)
     }
 
-    s.parX = damp(s.parX, -pointer.y * parallax, 4, step)
-    s.parY = damp(s.parY, pointer.x * parallax, 4, step)
-
-    g.rotation.y = s.rotY + s.parY
-    g.rotation.x = s.rotX + s.parX
+    g.rotation.y = rotation.current.y + pointer.x * parallax
+    g.rotation.x = rotation.current.x + -pointer.y * parallax * 0.6
+    g.position.x = damp(g.position.x, pointer.x * 0.22, 3, dt)
+    g.position.y = damp(g.position.y, -pointer.y * 0.14, 3, dt)
   })
 
-  return <group ref={group}>{children}</group>
+  return (
+    <group ref={group} onPointerDown={start}>
+      {children}
+    </group>
+  )
 }

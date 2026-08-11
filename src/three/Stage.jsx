@@ -2,57 +2,43 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 
 /**
- * Pembungkus Canvas yang hemat: scene baru dipasang saat masuk viewport,
- * dan render dihentikan saat keluar viewport atau saat tab tidak aktif.
- * Ini yang menjaga scroll tetap halus meski ada empat scene 3D di satu halaman.
+ * Canvas hanya dirender saat section-nya masuk viewport, dan frameloop
+ * di-pause saat keluar — ini yang menjaga scroll tetap ringan meski ada
+ * empat scene 3D di satu halaman.
  */
-export default function Stage({
-  children,
-  camera = { position: [0, 0, 6], fov: 42 },
-  className = '',
-  dpr = [1, 1.75],
-  hint
-}) {
+export default function Stage({ children, camera, className = '', dpr = [1, 1.75] }) {
   const host = useRef(null)
+  const [visible, setVisible] = useState(false)
   const [mounted, setMounted] = useState(false)
-  const [active, setActive] = useState(false)
-  const [visible, setVisible] = useState(true)
 
   useEffect(() => {
-    const el = host.current
-    if (!el) return
+    const node = host.current
+    if (!node) return
 
     const io = new IntersectionObserver(
       ([entry]) => {
+        setVisible(entry.isIntersecting)
         if (entry.isIntersecting) setMounted(true)
-        setActive(entry.isIntersecting)
       },
-      { rootMargin: '250px 0px', threshold: 0.01 }
+      { rootMargin: '220px 0px', threshold: 0.05 }
     )
 
-    io.observe(el)
+    io.observe(node)
     return () => io.disconnect()
-  }, [])
-
-  useEffect(() => {
-    const onVis = () => setVisible(!document.hidden)
-    document.addEventListener('visibilitychange', onVis)
-    return () => document.removeEventListener('visibilitychange', onVis)
   }, [])
 
   return (
     <div ref={host} className={`stage ${className}`}>
       {mounted && (
         <Canvas
-          camera={camera}
           dpr={dpr}
-          frameloop={active && visible ? 'always' : 'never'}
+          frameloop={visible ? 'always' : 'demand'}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+          camera={{ position: [0, 0, 6], fov: 42, ...camera }}
         >
           <Suspense fallback={null}>{children}</Suspense>
         </Canvas>
       )}
-      {hint && <span className="stage-hint">{hint}</span>}
     </div>
   )
 }
