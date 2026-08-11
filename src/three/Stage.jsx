@@ -1,42 +1,28 @@
 import { Canvas } from '@react-three/fiber'
 import { Suspense } from 'react'
-import { useInView } from './useDragRotate'
-import { useIsLowPower } from '../lib/hooks'
 
 /**
- * Wrapper canvas: transparan, DPR adaptif, dan berhenti render saat keluar viewport.
- * `hint` = teks kecil "drag to rotate" di pojok.
+ * Wrapper Canvas standar untuk semua scene.
+ * - frameloop dimatikan saat section di luar viewport -> scroll tetap ringan
+ * - dpr dibatasi 1.6 supaya layar retina tidak membakar GPU
+ * - kamera tidak pernah menangkap wheel event, jadi scroll halaman tidak terkunci
  */
 export default function Stage({
   children,
+  active = true,
   camera = { position: [0, 0, 6], fov: 42 },
-  className = '',
-  hint = 'drag · rotate',
-  style
+  className = ''
 }) {
-  const [ref, inView] = useInView()
-  const low = useIsLowPower()
-
   return (
-    <div ref={ref} className={`stage ${className}`} style={style}>
-      <Canvas
-        frameloop={inView ? 'always' : 'never'}
-        dpr={low ? [1, 1.25] : [1, 1.85]}
-        camera={camera}
-        gl={{
-          antialias: !low,
-          alpha: true,
-          powerPreference: 'high-performance',
-          stencil: false,
-          depth: true
-        }}
-        onCreated={({ gl }) => {
-          gl.setClearColor(0x000000, 0)
-        }}
-      >
-        <Suspense fallback={null}>{children}</Suspense>
-      </Canvas>
-      {hint && <span className="stage-hint mono">{hint}</span>}
-    </div>
+    <Canvas
+      className={className}
+      frameloop={active ? 'always' : 'never'}
+      dpr={[1, 1.6]}
+      gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+      camera={camera}
+      style={{ position: 'absolute', inset: 0 }}
+    >
+      <Suspense fallback={null}>{children}</Suspense>
+    </Canvas>
   )
 }
