@@ -1,92 +1,114 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { clamp, damp } from './geo'
+import { damp, clamp } from './geo'
 
 /**
- * Wrapper interaksi mouse untuk objek 3D.
- * - drag  : putar objek (pointer capture, jadi tidak lepas saat keluar canvas)
- * - hover : parallax halus mengikuti posisi pointer
- * - idle  : auto-spin pelan yang kembali aktif setelah drag berhenti
+ * Pembungkus interaksi mouse untuk objek 3D.
  *
- * Penting untuk kenyamanan scroll: pointer event hanya "menangkap" saat
- * tombol mouse ditekan, sentuhan vertikal tetap diteruskan ke halaman
- * (lihat `touch-action: pan-y` pada canvas di styles).
+ * Kunci kenyamanan scroll: pointer events dipasang di elemen canvas dengan
+ * `touch-action: pan-y`, dan hanya drag horizontal/vertikal setelah ambang batas
+ * yang menahan halaman. Wheel TIDAK pernah di-capture, jadi scroll halaman
+ * selalu lolos ke Lenis — tidak ada "scroll jacking".
  */
 export default function DragGroup({
   children,
-  autoSpin = 0.15,
-  parallax = 0.15,
-  clampX = 0.75,
-  ...props
+  autoSpin = 0.1,
+  parallax = 0.2,
+  clampX = 0.65,
+  scale = 1
 }) {
   const group = useRef()
-  const drag = useRef({ active: false, x: 0, y: 0 })
-  const velocity = useRef({ x: 0, y: 0 })
-  const rotation = useRef({ x: 0, y: 0 })
-  const [grabbing, setGrabbing] = useState(false)
-  const { pointer } = useThree()
+  const gl = useThree((s) => s.gl)
 
-  const onDown = (e) => {
-    e.stopPropagation()
-    e.target.setPointerCapture?.(e.pointerId)
-    drag.current = { active: true, x: e.clientX, y: e.clientY }
-    setGrabbing(true)
-    document.body.style.cursor = 'grabbing'
-  }
+  const state = useRef({
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+    velX: 0,
+    velY: 0,
+    rotY: 0,
+    rotX: 0,
+    pointerX: 0,
+    pointerY: 0,
+    hasPointer: false
+  })
 
-  const onMove = (e) => {
-    if (!drag.current.active) return
-    e.stopPropagation()
-    const dx = e.clientX - drag.current.x
-    const dy = e.clientY - drag.current.y
-    drag.current.x = e.clientX
-    drag.current.y = e.clientY
-    velocity.current.y = dx * 0.005
-    velocity.current.x = dy * 0.004
-    rotation.current.y += velocity.current.y
-    rotation.current.x = clamp(rotation.current.x + velocity.current.x, -clampX, clampX)
-  }
+  useEffect(() => {
+    const el = gl.domElement
+    const s = state.current
 
-  const onUp = (e) => {
-    if (!drag.current.active) return
-    e.target.releasePointerCapture?.(e.pointerId)
-    drag.current.active = false
-    setGrabbing(false)
-    document.body.style.cursor = ''
-  }
-
-  useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05)
-
-    if (!drag.current.active) {
-      // inersia setelah dilepas, lalu kembali ke auto-spin
-      velocity.current.y = damp(velocity.current.y, autoSpin * dt, 2.5, dt)
-      velocity.current.x = damp(velocity.current.x, 0, 4, dt)
-      rotation.current.y += velocity.current.y
-      rotation.current.x = clamp(rotation.current.x + velocity.current.x, -clampX, clampX)
-      rotation.current.x = damp(rotation.current.x, pointer.y * parallax, 2, dt)
+    const down = (e) => {
+      s.dragging = true
+      s.lastX = e.clientX
+      s.lastY = e.clientY
+      el.setPointerCapture?.(e.pointerId)
+      el.style.cursor = 'grabbing'
     }
 
-    group.current.rotation.y = damp(group.current.rotation.y, rotation.current.y, 10, dt)
-    group.current.rotation.x = damp(group.current.rotation.x, rotation.current.x, 10, dt)
+    const move = (e) => {
+      const rect = el.getBoundingClientRect()
+      s.pointerX = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      s.pointerY = ((e.clientY - rect.top) / rect.height) * 2 - 1
+      s.hasPointer = true
+      if (!s.dragging) return
+      const dx = e.clientX - s.lastX
+      const dy = e.clientY - s.lastY
+      s.lastX = e.clientX
+      s.lastY = e.clientY
+      s.velX += dx * 0.005
+      s.velY += dy * 0.004
+    }
 
-    const targetX = pointer.x * parallax * 0.6
-    const targetY = pointer.y * parallax * 0.35
+    const up = (e) => {
+      s.dragging = false
+      el.releasePointerCapture?.(e.pointerId)
+      el.style.cursor = 'grab'
+    }
+
+    const leave = () => {
+      s.hasPointer = false
+      s.dragging = false
+    }
+
+    el.style.cursor = 'grab'
+    el.style.touchAction = 'pan-y'
+    el.addEventListener('pointerdown', down)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    el.addEventListener('pointerleave', leave)
+
+    return () => {
+      el.removeEventListener('pointerdown', down)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      el.removeEventListener('pointerleave', leave)
+    }
+  }, [gl])
+
+  useFrame((_, delta) => {
+    const dt = Math.min(delta, 0.05)
+    const s = state.current
+
+    s.rotY += s.velX
+    s.rotX = clamp(s.rotX + s.velY, -clampX, clampX)
+
+    // inersia: lepas drag → objek melambat halus, bukan berhenti mendadak
+    s.velX *= s.dragging ? 0.6 : 0.92
+    s.velY *= s.dragging ? 0.6 : 0.9
+
+    if (!s.dragging) s.rotY += autoSpin * dt
+
+    const targetX = s.hasPointer ? s.pointerX * parallax : 0
+    const targetY = s.hasPointer ? -s.pointerY * parallax * 0.6 : 0
+
+    group.current.rotation.y = s.rotY
+    group.current.rotation.x = s.rotX + targetY * 0.35
     group.current.position.x = damp(group.current.position.x, targetX, 3, dt)
-    group.current.position.y = damp(group.current.position.y, targetY, 3, dt)
+    group.current.position.y = damp(group.current.position.y, targetY * 0.5, 3, dt)
   })
 
   return (
-    <group
-      ref={group}
-      onPointerDown={onDown}
-      onPointerMove={onMove}
-      onPointerUp={onUp}
-      onPointerCancel={onUp}
-      onPointerOver={() => !grabbing && (document.body.style.cursor = 'grab')}
-      onPointerOut={() => !drag.current.active && (document.body.style.cursor = '')}
-      {...props}
-    >
+    <group ref={group} scale={scale}>
       {children}
     </group>
   )
