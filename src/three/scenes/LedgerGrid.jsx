@@ -1,112 +1,96 @@
 import { useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { PALETTE } from '../geo'
 
 /**
- * Ledger grid: bidang blok ter-instanced yang "terangkat" mengikuti pointer.
- * Interaksi langsung ke posisi kursor di atas plane — tanpa drag,
- * jadi aman dilewati saat scroll.
+ * Ledger grid: bidang batang vertikal yang bereaksi terhadap kursor.
+ * Gelombang mengikuti posisi pointer — metafora likuiditas / throughput.
+ * Tidak menangkap gestur scroll: hanya membaca posisi pointer global.
  */
 
 const COLS = 26
-const ROWS = 16
-const GAP = 0.34
+const ROWS = 14
+const GAP = 0.26
 const COUNT = COLS * ROWS
 
 export default function LedgerGrid() {
   const mesh = useRef()
-  const pointer = useRef(new THREE.Vector3(0, 0, 999))
-  const dummy = useMemo(() => new THREE.Object3D(), [])
-  const color = useMemo(() => new THREE.Color(), [])
-  const base = useMemo(() => new THREE.Color(PALETTE.slate), [])
-  const hot = useMemo(() => new THREE.Color(PALETTE.teal), [])
+  const { pointer } = useThree()
 
   const cells = useMemo(() => {
-    const list = []
+    const arr = []
     for (let x = 0; x < COLS; x++) {
       for (let z = 0; z < ROWS; z++) {
-        list.push({
-          x: (x - (COLS - 1) / 2) * GAP,
-          z: (z - (ROWS - 1) / 2) * GAP,
-          phase: (x + z) * 0.35
+        arr.push({
+          x: (x - COLS / 2 + 0.5) * GAP,
+          z: (z - ROWS / 2 + 0.5) * GAP,
+          seed: (x * 31 + z * 17) % 100 / 100
         })
       }
     }
-    return list
+    return arr
   }, [])
 
-  const heights = useRef(new Float32Array(COUNT))
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const color = useMemo(() => new THREE.Color(), [])
+  const tealColor = useMemo(() => new THREE.Color(PALETTE.teal), [])
+  const amberColor = useMemo(() => new THREE.Color(PALETTE.amber), [])
+  const heights = useRef(new Float32Array(COUNT).fill(0.1))
 
   useFrame((state, delta) => {
-    const inst = mesh.current
-    if (!inst) return
+    const m = mesh.current
+    if (!m) return
     const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
-    const p = pointer.current
+
+    // pointer NDC → koordinat bidang (kasar tapi cukup, dan sangat murah)
+    const px = pointer.x * (COLS * GAP) * 0.55
+    const pz = -pointer.y * (ROWS * GAP) * 0.75
 
     for (let i = 0; i < COUNT; i++) {
       const c = cells[i]
-      const dx = c.x - p.x
-      const dz = c.z - p.z
-      const dist = Math.sqrt(dx * dx + dz * dz)
+      const dist = Math.hypot(c.x - px, c.z - pz)
 
-      const wave = Math.sin(t * 1.1 - c.phase) * 0.055 + 0.075
-      const influence = Math.max(0, 1 - dist / 2.4)
-      const target = wave + influence * influence * 1.05
+      const wave = Math.sin(t * 1.1 - dist * 2.4) * 0.09
+      const ripple = Math.max(0, 1 - dist / 1.5) ** 2 * 0.75
+      const base = 0.09 + c.seed * 0.14
+      const target = base + wave + ripple
 
-      heights.current[i] = THREE.MathUtils.damp(heights.current[i], target, 7, dt)
+      heights.current[i] = THREE.MathUtils.damp(heights.current[i], Math.max(0.04, target), 9, dt)
       const h = heights.current[i]
 
       dummy.position.set(c.x, h / 2, c.z)
-      dummy.scale.set(1, Math.max(h, 0.02) / 0.1, 1)
+      dummy.scale.set(1, h / 0.1, 1)
       dummy.updateMatrix()
-      inst.setMatrixAt(i, dummy.matrix)
+      m.setMatrixAt(i, dummy.matrix)
 
-      color.copy(base).lerp(hot, Math.min(1, influence * 1.3))
-      inst.setColorAt(i, color)
+      const heat = THREE.MathUtils.clamp((h - 0.12) / 0.7, 0, 1)
+      color.set(PALETTE.slate).lerp(tealColor, heat)
+      if (heat > 0.7) color.lerp(amberColor, (heat - 0.7) / 0.3 * 0.5)
+      m.setColorAt(i, color)
     }
 
-    inst.instanceMatrix.needsUpdate = true
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true
+    m.instanceMatrix.needsUpdate = true
+    if (m.instanceColor) m.instanceColor.needsUpdate = true
   })
 
   return (
     <>
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[4, 6, 3]} intensity={1} color={PALETTE.mist} />
-      <pointLight position={[0, 3, 0]} intensity={14} color={PALETTE.indigo} distance={12} />
+      <ambientLight intensity={0.7} />
+      <directionalLight position={[2, 6, 3]} intensity={0.9} color={PALETTE.mist} />
+      <pointLight position={[0, 2.5, 0]} intensity={6} color={PALETTE.teal} distance={8} />
 
-      <group rotation={[0.15, 0.5, 0]}>
-        {/* plane tak terlihat untuk membaca posisi kursor di ruang grid */}
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0, 0]}
-          onPointerMove={(e) => {
-            e.stopPropagation()
-            pointer.current.set(e.point.x, 0, e.point.z)
-          }}
-          onPointerOut={() => pointer.current.set(0, 0, 999)}
-        >
-          <planeGeometry args={[COLS * GAP + 2, ROWS * GAP + 2]} />
-          <meshBasicMaterial visible={false} />
-        </mesh>
-
+      <group rotation={[0.36, 0.5, 0]} position={[0, -0.5, 0]}>
         <instancedMesh ref={mesh} args={[undefined, undefined, COUNT]}>
-          <boxGeometry args={[0.2, 0.1, 0.2]} />
-          <meshStandardMaterial
-            roughness={0.4}
-            metalness={0.75}
-            emissive={PALETTE.indigo}
-            emissiveIntensity={0.16}
-            flatShading
-          />
+          <boxGeometry args={[0.11, 0.1, 0.11]} />
+          <meshStandardMaterial roughness={0.45} metalness={0.75} flatShading />
         </instancedMesh>
 
-        <gridHelper
-          args={[COLS * GAP, COLS, PALETTE.steel, PALETTE.slate]}
-          position={[0, -0.02, 0]}
-        />
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
+          <planeGeometry args={[COLS * GAP + 0.4, ROWS * GAP + 0.4]} />
+          <meshBasicMaterial color={PALETTE.ink} transparent opacity={0.65} />
+        </mesh>
       </group>
     </>
   )

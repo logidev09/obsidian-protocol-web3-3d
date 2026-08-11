@@ -1,43 +1,42 @@
 import * as THREE from 'three'
 
 /**
- * Palet "muted cyberpunk".
- * Sengaja desaturasi: tidak ada neon pink/hijau stabilo.
- * Basisnya biru-abu dingin, aksen teal redup + amber hangat sebagai kontras.
+ * Palet: cyberpunk yang direm.
+ * Basis abu-biru dingin, aksen teal desaturasi + amber tembaga.
+ * Sengaja menghindari neon magenta/cyan penuh saturasi.
  */
 export const PALETTE = {
   void: '#06080b',
   ink: '#0b0f14',
-  slate: '#182029',
-  steel: '#5f6f80',
-  mist: '#c3ced9',
-  teal: '#3fb0a4',
-  indigo: '#4b5aa6',
-  amber: '#c98f4e'
+  slate: '#1a2029',
+  steel: '#3b4654',
+  mist: '#c9d2dc',
+  teal: '#4a9a8f',
+  indigo: '#5a6b9c',
+  amber: '#c08a4e'
 }
 
-/** PRNG deterministik (mulberry32) supaya layout partikel konsisten tiap render. */
+/** PRNG deterministik supaya layout acak tetap konsisten tiap render. */
 export function seededRandom(seed = 1) {
-  let a = seed >>> 0
-  return function () {
-    a |= 0
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  let s = seed >>> 0 || 1
+  return () => {
+    s ^= s << 13
+    s ^= s >>> 17
+    s ^= s << 5
+    return ((s >>> 0) % 100000) / 100000
   }
 }
 
 /**
- * Balok dengan sudut membulat di bidang XZ (tampak atas),
- * dibangun dari Shape + ExtrudeGeometry lalu di-center.
+ * Box dengan sudut membulat, dibangun manual dari ExtrudeGeometry
+ * supaya tidak perlu dependensi tambahan dan tetap low-poly.
  */
-export function roundedBoxGeometry(width, height, depth, radius = 0.1) {
+export function roundedBoxGeometry(width, height, depth, radius = 0.1, steps = 3) {
+  const r = Math.min(radius, width / 2 - 0.001, depth / 2 - 0.001)
+  const shape = new THREE.Shape()
   const w = width / 2
   const d = depth / 2
-  const r = Math.min(radius, w - 0.001, d - 0.001)
 
-  const shape = new THREE.Shape()
   shape.moveTo(-w + r, -d)
   shape.lineTo(w - r, -d)
   shape.quadraticCurveTo(w, -d, w, -d + r)
@@ -50,13 +49,44 @@ export function roundedBoxGeometry(width, height, depth, radius = 0.1) {
 
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: height,
-    bevelEnabled: false,
-    curveSegments: 6
+    bevelEnabled: true,
+    bevelThickness: height * 0.12,
+    bevelSize: r * 0.25,
+    bevelSegments: 1,
+    curveSegments: steps
   })
+
   geo.rotateX(-Math.PI / 2)
-  geo.translate(0, -height / 2, 0)
+  geo.center()
   geo.computeVertexNormals()
   return geo
 }
 
-export const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
+/** Titik-titik pada bola dengan distribusi merata (fibonacci sphere). */
+export function fibonacciSphere(count, radius = 1) {
+  const points = []
+  const golden = Math.PI * (3 - Math.sqrt(5))
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (i / (count - 1)) * 2
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
+    const theta = golden * i
+    points.push(
+      new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
+    )
+  }
+  return points
+}
+
+/** Deteksi perangkat lemah / preferensi reduce-motion untuk menurunkan beban render. */
+export function getPerfProfile() {
+  if (typeof window === 'undefined') return { dpr: [1, 1.5], low: false, reduced: false }
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const cores = navigator.hardwareConcurrency || 4
+  const mobile = window.matchMedia('(max-width: 820px)').matches
+  const low = reduced || cores <= 4 || mobile
+  return {
+    reduced,
+    low,
+    dpr: low ? [1, 1.4] : [1, 1.9]
+  }
+}
