@@ -1,40 +1,58 @@
-import { Suspense } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { useInViewport } from '../lib/hooks'
 
 /**
- * Pembungkus canvas: hanya mount saat section dekat viewport,
- * DPR dibatasi, latar transparan supaya menyatu dengan halaman.
+ * Pembungkus Canvas yang hemat: scene baru dipasang saat masuk viewport,
+ * dan render dihentikan saat keluar viewport atau saat tab tidak aktif.
+ * Ini yang menjaga scroll tetap halus meski ada empat scene 3D di satu halaman.
  */
 export default function Stage({
   children,
-  tag,
-  readout,
-  className = 'stage',
-  camera = { position: [0, 0, 5.4], fov: 42 },
-  style
+  camera = { position: [0, 0, 6], fov: 42 },
+  className = '',
+  dpr = [1, 1.75],
+  hint
 }) {
-  const [ref, inView] = useInViewport('300px')
+  const host = useRef(null)
+  const [mounted, setMounted] = useState(false)
+  const [active, setActive] = useState(false)
+  const [visible, setVisible] = useState(true)
+
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setMounted(true)
+        setActive(entry.isIntersecting)
+      },
+      { rootMargin: '250px 0px', threshold: 0.01 }
+    )
+
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const onVis = () => setVisible(!document.hidden)
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
 
   return (
-    <div ref={ref} className={className} style={style}>
-      {inView ? (
+    <div ref={host} className={`stage ${className}`}>
+      {mounted && (
         <Canvas
-          dpr={[1, 1.75]}
           camera={camera}
+          dpr={dpr}
+          frameloop={active && visible ? 'always' : 'never'}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-          onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
         >
           <Suspense fallback={null}>{children}</Suspense>
         </Canvas>
-      ) : (
-        <div className="canvas-fallback">initializing render</div>
       )}
-
-      {tag ? <div className="stage-tag">{tag}</div> : null}
-      {readout !== undefined ? (
-        <div className={readout ? 'stage-readout on' : 'stage-readout'}>{readout || '\u00a0'}</div>
-      ) : null}
+      {hint && <span className="stage-hint">{hint}</span>}
     </div>
   )
 }

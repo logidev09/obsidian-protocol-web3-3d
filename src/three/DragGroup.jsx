@@ -1,88 +1,136 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
+import { damp } from './geo'
 
 /**
- * Group yang bisa diputar dengan drag mouse, punya inersia, dan pelan-pelan
- * kembali berputar sendiri saat dilepas.
+ * Group yang bisa diputar dengan drag mouse, punya inersia, auto-spin lembut,
+ * dan parallax mengikuti pointer.
  *
- * Catatan scroll: canvas memakai `touch-action: pan-y`, jadi di layar sentuh
- * geser vertikal tetap men-scroll halaman — hanya geser horizontal yang memutar.
+ * Catatan scroll: di perangkat sentuh, drag hanya diambil alih setelah gerakan
+ * jelas horizontal. Gestur vertikal selalu diteruskan ke halaman, jadi scroll
+ * tetap nyaman dan tidak pernah "tersangkut" di dalam canvas.
  */
 export default function DragGroup({
   children,
   autoSpin = 0.15,
-  damping = 0.925,
   sensitivity = 0.006,
+  parallax = 0.12,
   clampX = 0.85,
-  parallax = 0,
-  ...props
+  damping = 0.94
 }) {
   const group = useRef()
-  const vel = useRef({ x: 0, y: 0 })
-  const rot = useRef({ x: 0, y: 0 })
-  const dragging = useRef(null)
-  const { gl, pointer } = useThree()
+  const { gl } = useThree()
+
+  const state = useRef({
+    dragging: false,
+    pointerId: null,
+    lastX: 0,
+    lastY: 0,
+    startX: 0,
+    startY: 0,
+    axisLocked: false,
+    velX: 0,
+    velY: 0,
+    rotX: 0,
+    rotY: 0,
+    parX: 0,
+    parY: 0
+  })
 
   useEffect(() => {
     const el = gl.domElement
-    el.style.cursor = 'grab'
+    const s = state.current
 
-    const onDown = (e) => {
-      dragging.current = { x: e.clientX, y: e.clientY }
-      el.style.cursor = 'grabbing'
+    const down = (e) => {
+      if (e.pointerType === 'touch') {
+        s.axisLocked = false
+      } else {
+        s.dragging = true
+        s.axisLocked = true
+        el.setPointerCapture?.(e.pointerId)
+        el.style.cursor = 'grabbing'
+      }
+      s.pointerId = e.pointerId
+      s.startX = s.lastX = e.clientX
+      s.startY = s.lastY = e.clientY
     }
 
-    const onMove = (e) => {
-      const d = dragging.current
-      if (!d) return
-      vel.current.y += (e.clientX - d.x) * sensitivity
-      vel.current.x += (e.clientY - d.y) * sensitivity
-      dragging.current = { x: e.clientX, y: e.clientY }
+    const move = (e) => {
+      if (s.pointerId !== e.pointerId) return
+
+      if (!s.axisLocked && e.pointerType === 'touch') {
+        const dx = Math.abs(e.clientX - s.startX)
+        const dy = Math.abs(e.clientY - s.startY)
+        if (dx < 8 && dy < 8) return
+        // Gerakan dominan vertikal = niat scroll. Lepaskan ke halaman.
+        if (dy >= dx) {
+          s.pointerId = null
+          return
+        }
+        s.axisLocked = true
+        s.dragging = true
+      }
+
+      if (!s.dragging) return
+
+      const dx = e.clientX - s.lastX
+      const dy = e.clientY - s.lastY
+      s.lastX = e.clientX
+      s.lastY = e.clientY
+
+      s.velY = dx * sensitivity
+      s.velX = dy * sensitivity
+      s.rotY += s.velY
+      s.rotX = Math.max(-clampX, Math.min(clampX, s.rotX + s.velX))
+
+      if (e.pointerType === 'touch') e.preventDefault()
     }
 
-    const onUp = () => {
-      if (!dragging.current) return
-      dragging.current = null
-      el.style.cursor = 'grab'
+    const up = (e) => {
+      if (s.pointerId !== e.pointerId) return
+      s.dragging = false
+      s.axisLocked = false
+      s.pointerId = null
+      el.releasePointerCapture?.(e.pointerId)
+      el.style.cursor = ''
     }
 
-    el.addEventListener('pointerdown', onDown)
-    window.addEventListener('pointermove', onMove, { passive: true })
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
+    el.style.touchAction = 'pan-y'
+    el.addEventListener('pointerdown', down)
+    el.addEventListener('pointermove', move, { passive: false })
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+    el.addEventListener('pointerleave', up)
 
     return () => {
-      el.removeEventListener('pointerdown', onDown)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
+      el.removeEventListener('pointerdown', down)
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      el.removeEventListener('pointerleave', up)
     }
-  }, [gl, sensitivity])
+  }, [gl, sensitivity, clampX])
 
-  useFrame((_, delta) => {
+  useFrame(({ pointer }, dt) => {
+    const s = state.current
     const g = group.current
     if (!g) return
 
-    const dt = Math.min(delta, 0.05)
-    if (!dragging.current) vel.current.y += autoSpin * dt
+    const step = Math.min(dt, 0.05)
 
-    rot.current.y += vel.current.y
-    rot.current.x += vel.current.x
-    rot.current.x = Math.max(-clampX, Math.min(clampX, rot.current.x))
+    if (!s.dragging) {
+      s.velY *= damping
+      s.velX *= damping
+      s.rotY += s.velY + autoSpin * step
+      s.rotX = Math.max(-clampX, Math.min(clampX, s.rotX + s.velX))
+    }
 
-    vel.current.y *= damping
-    vel.current.x *= damping
+    s.parX = damp(s.parX, -pointer.y * parallax, 4, step)
+    s.parY = damp(s.parY, pointer.x * parallax, 4, step)
 
-    const px = parallax ? pointer.x * parallax : 0
-    const py = parallax ? -pointer.y * parallax : 0
-
-    g.rotation.y += (rot.current.y + px - g.rotation.y) * 0.12
-    g.rotation.x += (rot.current.x + py - g.rotation.x) * 0.12
+    g.rotation.y = s.rotY + s.parY
+    g.rotation.x = s.rotX + s.parX
   })
 
-  return (
-    <group ref={group} {...props}>
-      {children}
-    </group>
-  )
+  return <group ref={group}>{children}</group>
 }
