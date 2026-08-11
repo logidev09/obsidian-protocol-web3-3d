@@ -1,29 +1,65 @@
-import { Suspense } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { getPerfProfile } from './geo'
 
-const perf = getPerfProfile()
-
 /**
- * Pembungkus Canvas standar untuk semua section.
+ * Pembungkus <Canvas> yang sadar viewport.
  *
- * Dua hal penting untuk kenyamanan scroll:
- * 1. `frameloop="demand"` tidak dipakai (kita butuh animasi), tapi setiap
- *    canvas hanya di-mount saat section-nya terlihat (lihat useInView).
- * 2. `touch-action: pan-y` di style, sehingga di mobile jari tetap bisa
- *    men-scroll halaman walaupun menyentuh area 3D.
+ * Scene hanya di-mount saat mendekati layar, dan frameloop dimatikan
+ * begitu keluar layar atau tab tidak aktif. Ini kunci supaya halaman
+ * dengan 4 scene WebGL tetap enak di-scroll.
  */
-export default function SceneCanvas({ children, camera, className = '', ...rest }) {
+export default function SceneCanvas({
+  children,
+  camera = { position: [0, 0, 6], fov: 42 },
+  className = '',
+  eventPrefix,
+  onCreated
+}) {
+  const host = useRef(null)
+  const [mounted, setMounted] = useState(false)
+  const [active, setActive] = useState(false)
+  const profile = getPerfProfile()
+
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setMounted(true)
+        setActive(entry.isIntersecting)
+      },
+      { rootMargin: '260px 0px', threshold: 0.01 }
+    )
+    io.observe(el)
+
+    const onVisibility = () => {
+      if (document.hidden) setActive(false)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      io.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
   return (
-    <Canvas
-      className={`scene-canvas ${className}`}
-      dpr={perf.dpr}
-      gl={{ antialias: !perf.low, alpha: true, powerPreference: 'high-performance' }}
-      camera={{ fov: 42, position: [0, 0, 7], ...camera }}
-      style={{ touchAction: 'pan-y' }}
-      {...rest}
-    >
-      <Suspense fallback={null}>{children}</Suspense>
-    </Canvas>
+    <div ref={host} className={`scene-host ${className}`}>
+      {mounted && (
+        <Canvas
+          dpr={profile.dpr}
+          camera={camera}
+          frameloop={active ? 'always' : 'never'}
+          eventPrefix={eventPrefix}
+          gl={{ antialias: !profile.low, alpha: true, powerPreference: 'high-performance' }}
+          onCreated={onCreated}
+        >
+          <Suspense fallback={null}>{children}</Suspense>
+        </Canvas>
+      )}
+      <div className="scene-noise" aria-hidden="true" />
+    </div>
   )
 }
