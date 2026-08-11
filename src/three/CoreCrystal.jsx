@@ -1,150 +1,123 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import * as THREE from 'three'
-import DragGroup from './DragGroup.jsx'
+import DragGroup from './DragGroup'
+import { PALETTE } from './geo'
 
-/**
- * SCENE 1 — "Obsidian Core"
- * Kristal polihedral: solid faceted + wireframe luar + cincin orbit.
- * Drag untuk memutar, hover untuk mengembang.
- */
+function Shard({ radius, speed, tilt, offset, size, color }) {
+  const ref = useRef()
 
-function Facets() {
-  const mesh = useRef()
-  const [hovered, setHovered] = useState(false)
-
-  const geometry = useMemo(() => {
-    const g = new THREE.IcosahedronGeometry(1.32, 1)
-    // sedikit dorong tiap vertex supaya facet terasa "dipahat", bukan bola sempurna
-    const pos = g.attributes.position
-    const v = new THREE.Vector3()
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i)
-      const n = 1 + Math.sin(v.x * 3.1) * Math.cos(v.y * 2.7) * 0.075
-      v.multiplyScalar(n)
-      pos.setXYZ(i, v.x, v.y, v.z)
-    }
-    g.computeVertexNormals()
-    return g
-  }, [])
-
-  useFrame((state, dt) => {
-    if (!mesh.current) return
-    const target = hovered ? 1.07 : 1
-    mesh.current.scale.lerp(new THREE.Vector3(target, target, target), Math.min(dt * 5, 0.2))
+  useFrame(({ clock }) => {
+    const m = ref.current
+    if (!m) return
+    const t = clock.getElapsedTime() * speed + offset
+    m.position.set(Math.cos(t) * radius, Math.sin(t * 0.8) * radius * 0.3, Math.sin(t) * radius)
+    m.rotation.x = t * 0.7
+    m.rotation.y = t * 0.45
   })
 
   return (
-    <mesh
-      ref={mesh}
-      geometry={geometry}
-      onPointerOver={() => setHovered(true)}
-      onPointerOut={() => setHovered(false)}
-    >
+    <mesh ref={ref} rotation={[tilt, 0, 0]}>
+      <tetrahedronGeometry args={[size, 0]} />
       <meshStandardMaterial
-        color="#131a26"
-        roughness={0.28}
-        metalness={0.85}
+        color={color}
         flatShading
-        emissive="#4d5ba8"
-        emissiveIntensity={hovered ? 0.4 : 0.2}
+        metalness={0.85}
+        roughness={0.32}
+        emissive={color}
+        emissiveIntensity={0.12}
       />
     </mesh>
   )
 }
 
-function Shell() {
+function Ring({ radius, tilt, speed, color, opacity }) {
   const ref = useRef()
-  const geometry = useMemo(() => new THREE.IcosahedronGeometry(1.78, 1), [])
-
-  useFrame((state, dt) => {
-    if (!ref.current) return
-    ref.current.rotation.y -= dt * 0.09
-    ref.current.rotation.z += dt * 0.03
-    const s = 1 + Math.sin(state.clock.elapsedTime * 0.7) * 0.012
-    ref.current.scale.setScalar(s)
+  useFrame((_, d) => {
+    if (ref.current) ref.current.rotation.z += speed * Math.min(d, 0.05)
   })
-
   return (
-    <lineSegments ref={ref}>
-      <edgesGeometry args={[geometry]} />
-      <lineBasicMaterial color="#7c8cff" transparent opacity={0.34} />
-    </lineSegments>
+    <mesh ref={ref} rotation={tilt}>
+      <torusGeometry args={[radius, 0.006, 3, 96]} />
+      <meshBasicMaterial color={color} transparent opacity={opacity} />
+    </mesh>
   )
 }
 
-function OrbitRing({ radius, tilt, speed, color, opacity }) {
-  const ref = useRef()
-  useFrame((state, dt) => {
-    if (ref.current) ref.current.rotation.z += dt * speed
-  })
-  return (
-    <group rotation={tilt}>
-      <mesh ref={ref}>
-        <torusGeometry args={[radius, 0.0055, 3, 128]} />
-        <meshBasicMaterial color={color} transparent opacity={opacity} />
-      </mesh>
-    </group>
-  )
-}
-
-function Shards({ count = 14 }) {
-  const group = useRef()
-  const shards = useMemo(
-    () =>
-      Array.from({ length: count }, (_, i) => ({
-        key: i,
-        r: 2.3 + Math.random() * 1.5,
-        a: (i / count) * Math.PI * 2,
-        y: (Math.random() - 0.5) * 2.2,
-        s: 0.035 + Math.random() * 0.075,
-        rot: [Math.random() * 3, Math.random() * 3, Math.random() * 3]
-      })),
-    [count]
-  )
-
-  useFrame((state, dt) => {
-    if (group.current) group.current.rotation.y += dt * 0.055
-  })
-
-  return (
-    <group ref={group}>
-      {shards.map((s) => (
-        <mesh
-          key={s.key}
-          position={[Math.cos(s.a) * s.r, s.y, Math.sin(s.a) * s.r]}
-          rotation={s.rot}
-        >
-          <tetrahedronGeometry args={[s.s, 0]} />
-          <meshStandardMaterial
-            color="#8e9ac4"
-            flatShading
-            roughness={0.35}
-            metalness={0.7}
-            emissive="#3b4470"
-            emissiveIntensity={0.35}
-          />
-        </mesh>
-      ))}
-    </group>
-  )
-}
-
+/**
+ * Inti hero: kristal ikosahedron low-poly di dalam sangkar wireframe,
+ * dikelilingi pecahan yang mengorbit. Drag untuk memutar, gerakkan mouse
+ * untuk parallax halus.
+ */
 export default function CoreCrystal() {
+  const core = useRef()
+  const cage = useRef()
+
+  const shards = useMemo(
+    () => [
+      { radius: 2.35, speed: 0.42, tilt: 0.3, offset: 0, size: 0.17, color: PALETTE.indigo },
+      { radius: 2.7, speed: -0.31, tilt: 0.9, offset: 1.9, size: 0.13, color: PALETTE.teal },
+      { radius: 2.05, speed: 0.55, tilt: -0.5, offset: 3.4, size: 0.11, color: PALETTE.sand },
+      { radius: 3.05, speed: -0.24, tilt: 0.15, offset: 4.8, size: 0.15, color: PALETTE.steel },
+      { radius: 2.5, speed: 0.36, tilt: -1.1, offset: 2.6, size: 0.1, color: PALETTE.indigo }
+    ],
+    []
+  )
+
+  useFrame(({ clock }, delta) => {
+    const t = clock.getElapsedTime()
+    const dt = Math.min(delta, 0.05)
+
+    if (core.current) {
+      core.current.scale.setScalar(1 + Math.sin(t * 0.9) * 0.035)
+      core.current.rotation.y += dt * 0.16
+    }
+    if (cage.current) {
+      cage.current.rotation.y -= dt * 0.1
+      cage.current.rotation.x = Math.sin(t * 0.35) * 0.12
+    }
+  })
+
   return (
     <>
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[4, 6, 5]} intensity={1.5} color="#c9d2ff" />
-      <directionalLight position={[-6, -3, -4]} intensity={0.7} color="#3fbfae" />
-      <pointLight position={[0, 0, 2.6]} intensity={9} color="#7c8cff" distance={9} />
+      <ambientLight intensity={0.35} />
+      <directionalLight position={[4, 6, 5]} intensity={1.15} color="#dfe6f5" />
+      <pointLight position={[-5, -2, 3]} intensity={26} distance={16} color={PALETTE.indigo} />
+      <pointLight position={[4.5, -3.5, -4]} intensity={20} distance={16} color={PALETTE.teal} />
 
-      <DragGroup autoSpin={0.16}>
-        <Facets />
-        <Shell />
-        <Shards />
-        <OrbitRing radius={2.15} tilt={[1.5, 0.2, 0]} speed={0.18} color="#7c8cff" opacity={0.5} />
-        <OrbitRing radius={2.62} tilt={[1.1, -0.5, 0.4]} speed={-0.12} color="#3fbfae" opacity={0.34} />
-        <OrbitRing radius={3.05} tilt={[1.9, 0.6, -0.3]} speed={0.08} color="#c9a86a" opacity={0.2} />
+      <DragGroup autoSpin={0.16} parallax={0.22}>
+        <mesh ref={core}>
+          <icosahedronGeometry args={[1.15, 0]} />
+          <meshStandardMaterial color={PALETTE.deep} flatShading metalness={0.95} roughness={0.24} />
+        </mesh>
+
+        <mesh scale={1.02}>
+          <icosahedronGeometry args={[1.15, 0]} />
+          <meshBasicMaterial color={PALETTE.indigo} wireframe transparent opacity={0.3} />
+        </mesh>
+
+        <mesh ref={cage}>
+          <icosahedronGeometry args={[1.95, 1]} />
+          <meshBasicMaterial color="#4b5670" wireframe transparent opacity={0.2} />
+        </mesh>
+
+        <mesh>
+          <octahedronGeometry args={[0.42, 0]} />
+          <meshStandardMaterial
+            color={PALETTE.teal}
+            emissive={PALETTE.teal}
+            emissiveIntensity={0.9}
+            flatShading
+            metalness={0.4}
+            roughness={0.5}
+          />
+        </mesh>
+
+        <Ring radius={2.62} tilt={[Math.PI / 2.1, 0, 0]} speed={0.12} color="#56628a" opacity={0.35} />
+        <Ring radius={3.15} tilt={[Math.PI / 2.6, 0.4, 0]} speed={-0.08} color="#3d4759" opacity={0.28} />
+
+        {shards.map((s, i) => (
+          <Shard key={i} {...s} />
+        ))}
       </DragGroup>
     </>
   )

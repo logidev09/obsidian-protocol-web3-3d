@@ -2,88 +2,82 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 
 /**
- * Group yang bisa diputar dengan drag mouse / sentuh, dengan inersia + auto-spin.
- * Sumbu vertikal dibatasi supaya objek tidak pernah terbalik.
+ * Group yang bisa diputar dengan drag mouse, punya inersia, dan pelan-pelan
+ * kembali berputar sendiri saat dilepas.
+ *
+ * Catatan scroll: canvas memakai `touch-action: pan-y`, jadi di layar sentuh
+ * geser vertikal tetap men-scroll halaman — hanya geser horizontal yang memutar.
  */
 export default function DragGroup({
   children,
-  autoSpin = 0.14,
-  sensitivity = 0.0052,
-  damping = 0.93,
-  maxTilt = 0.62,
+  autoSpin = 0.15,
+  damping = 0.925,
+  sensitivity = 0.006,
+  clampX = 0.85,
+  parallax = 0,
   ...props
 }) {
   const group = useRef()
-  const s = useRef({ down: false, px: 0, py: 0, vx: 0, vy: 0, rx: 0, ry: 0, idle: 0 })
-  const { gl } = useThree()
+  const vel = useRef({ x: 0, y: 0 })
+  const rot = useRef({ x: 0, y: 0 })
+  const dragging = useRef(null)
+  const { gl, pointer } = useThree()
 
   useEffect(() => {
     const el = gl.domElement
-    const st = s.current
+    el.style.cursor = 'grab'
 
-    const down = (e) => {
-      st.down = true
-      st.px = e.clientX
-      st.py = e.clientY
-      st.idle = 0
+    const onDown = (e) => {
+      dragging.current = { x: e.clientX, y: e.clientY }
       el.style.cursor = 'grabbing'
     }
 
-    const move = (e) => {
-      if (!st.down) return
-      const dx = e.clientX - st.px
-      const dy = e.clientY - st.py
-      st.px = e.clientX
-      st.py = e.clientY
-      st.vx += dx * sensitivity
-      st.vy += dy * sensitivity * 0.72
+    const onMove = (e) => {
+      const d = dragging.current
+      if (!d) return
+      vel.current.y += (e.clientX - d.x) * sensitivity
+      vel.current.x += (e.clientY - d.y) * sensitivity
+      dragging.current = { x: e.clientX, y: e.clientY }
     }
 
-    const up = () => {
-      if (!st.down) return
-      st.down = false
+    const onUp = () => {
+      if (!dragging.current) return
+      dragging.current = null
       el.style.cursor = 'grab'
     }
 
-    el.style.cursor = 'grab'
-    el.addEventListener('pointerdown', down)
-    window.addEventListener('pointermove', move, { passive: true })
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
+    el.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointermove', onMove, { passive: true })
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
 
     return () => {
-      el.removeEventListener('pointerdown', down)
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
+      el.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
   }, [gl, sensitivity])
 
-  useFrame((state, dt) => {
-    const st = s.current
-    const d = Math.min(dt, 0.05)
+  useFrame((_, delta) => {
+    const g = group.current
+    if (!g) return
 
-    st.ry += st.vx
-    st.rx += st.vy
-    st.rx = Math.max(-maxTilt, Math.min(maxTilt, st.rx))
+    const dt = Math.min(delta, 0.05)
+    if (!dragging.current) vel.current.y += autoSpin * dt
 
-    if (!st.down) {
-      st.vx *= damping
-      st.vy *= damping
-      st.idle += d
-      // auto-spin kembali pelan setelah user berhenti menarik
-      if (st.idle > 0.7) st.ry += autoSpin * d
-      // tilt perlahan kembali netral
-      st.rx += (0 - st.rx) * 0.012
-    } else {
-      st.vx *= 0.72
-      st.vy *= 0.72
-    }
+    rot.current.y += vel.current.y
+    rot.current.x += vel.current.x
+    rot.current.x = Math.max(-clampX, Math.min(clampX, rot.current.x))
 
-    if (group.current) {
-      group.current.rotation.y = st.ry
-      group.current.rotation.x = st.rx
-    }
+    vel.current.y *= damping
+    vel.current.x *= damping
+
+    const px = parallax ? pointer.x * parallax : 0
+    const py = parallax ? -pointer.y * parallax : 0
+
+    g.rotation.y += (rot.current.y + px - g.rotation.y) * 0.12
+    g.rotation.x += (rot.current.x + py - g.rotation.x) * 0.12
   })
 
   return (
