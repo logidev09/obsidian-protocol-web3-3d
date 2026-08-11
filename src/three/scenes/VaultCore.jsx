@@ -1,143 +1,158 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from '../DragGroup'
-import { PALETTE, damp, fibonacciSphere } from '../geo'
+import { PALETTE, seededRandom } from '../geo'
 
 /**
- * HERO — "The Vault Core".
- * Icosahedron low-poly berlapis: inti solid, sangkar wireframe yang berdenyut,
- * dan cincin partikel. Drag untuk memutar, hover untuk membuka lapisan.
+ * Hero: inti vault berbentuk kristal low-poly.
+ * - Drag untuk memutar, lepas → berputar bebas dengan inersia.
+ * - Hover → cangkang wireframe mengembang, inti menyala.
+ * - Serpihan orbit bergerak mengelilingi inti.
  */
-function Core({ hovered }) {
-  const inner = useRef()
-  const cage = useRef()
-  const shell = useRef()
+
+function Shards({ count = 26, radius = 2.6 }) {
+  const group = useRef()
+  const shards = useMemo(() => {
+    const rand = seededRandom(7)
+    return Array.from({ length: count }, () => ({
+      radius: radius * (0.7 + rand() * 0.55),
+      speed: 0.08 + rand() * 0.22,
+      offset: rand() * Math.PI * 2,
+      tilt: (rand() - 0.5) * 1.1,
+      y: (rand() - 0.5) * 2.4,
+      size: 0.045 + rand() * 0.09,
+      spin: (rand() - 0.5) * 1.2
+    }))
+  }, [count, radius])
+
+  const refs = useRef([])
 
   useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
-    const open = hovered.current ? 1 : 0
-
-    const s = 1 + Math.sin(t * 1.1) * 0.015
-    inner.current.scale.setScalar(s)
-
-    cage.current.rotation.y += dt * 0.25
-    cage.current.rotation.z += dt * 0.08
-    const cageScale = damp(cage.current.scale.x, 1.32 + open * 0.16, 4, dt)
-    cage.current.scale.setScalar(cageScale)
-
-    shell.current.rotation.y -= dt * 0.14
-    const shellScale = damp(shell.current.scale.x, 1.72 + open * 0.3, 3, dt)
-    shell.current.scale.setScalar(shellScale)
-    shell.current.material.opacity = damp(shell.current.material.opacity, 0.1 + open * 0.16, 4, dt)
+    const dt = Math.min(delta, 0.05)
+    shards.forEach((s, i) => {
+      const m = refs.current[i]
+      if (!m) return
+      const a = t * s.speed + s.offset
+      m.position.set(
+        Math.cos(a) * s.radius,
+        s.y + Math.sin(a * 1.4) * 0.22,
+        Math.sin(a) * s.radius * Math.cos(s.tilt)
+      )
+      m.rotation.x += dt * s.spin
+      m.rotation.z += dt * s.spin * 0.7
+    })
+    if (group.current) group.current.rotation.y = t * 0.04
   })
 
   return (
-    <group>
-      <mesh ref={inner} castShadow>
-        <icosahedronGeometry args={[1, 1]} />
-        <meshStandardMaterial
-          color={PALETTE.panel}
-          roughness={0.32}
-          metalness={0.85}
-          flatShading
-          emissive={PALETTE.teal}
-          emissiveIntensity={0.14}
-        />
-      </mesh>
-
-      <mesh ref={cage}>
-        <icosahedronGeometry args={[1, 1]} />
-        <meshBasicMaterial color={PALETTE.teal} wireframe transparent opacity={0.4} />
-      </mesh>
-
-      <mesh ref={shell}>
-        <icosahedronGeometry args={[1, 0]} />
-        <meshBasicMaterial color={PALETTE.indigo} wireframe transparent opacity={0.12} />
-      </mesh>
+    <group ref={group}>
+      {shards.map((s, i) => (
+        <mesh key={i} ref={(el) => (refs.current[i] = el)}>
+          <tetrahedronGeometry args={[s.size, 0]} />
+          <meshStandardMaterial
+            color={PALETTE.steel}
+            emissive={PALETTE.teal}
+            emissiveIntensity={0.35}
+            roughness={0.35}
+            metalness={0.85}
+            flatShading
+          />
+        </mesh>
+      ))}
     </group>
   )
 }
 
-function OrbitDust({ count = 320 }) {
-  const points = useRef()
+export default function VaultCore() {
+  const shell = useRef()
+  const core = useRef()
+  const inner = useRef()
+  const [hovered, setHovered] = useState(false)
 
-  const { positions, radii, speeds, phases } = useMemo(() => {
-    const pts = fibonacciSphere(count, 1)
-    const positions = new Float32Array(count * 3)
-    const radii = new Float32Array(count)
-    const speeds = new Float32Array(count)
-    const phases = new Float32Array(count)
-    pts.forEach((p, i) => {
-      const r = 2.5 + (i % 7) * 0.12
-      radii[i] = r
-      speeds[i] = 0.06 + ((i % 11) / 11) * 0.12
-      phases[i] = Math.atan2(p.z, p.x)
-      positions[i * 3] = p.x * r
-      positions[i * 3 + 1] = p.y * r * 0.55
-      positions[i * 3 + 2] = p.z * r
-    })
-    return { positions, radii, speeds, phases }
-  }, [count])
-
-  useFrame((state) => {
+  useFrame((state, delta) => {
+    const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
-    const arr = points.current.geometry.attributes.position.array
-    for (let i = 0; i < count; i++) {
-      const angle = phases[i] + t * speeds[i]
-      const r = radii[i]
-      arr[i * 3] = Math.cos(angle) * r
-      arr[i * 3 + 2] = Math.sin(angle) * r
-      arr[i * 3 + 1] += Math.sin(t * 0.6 + i) * 0.0012
+
+    if (shell.current) {
+      const target = hovered ? 1.34 : 1.16
+      const s = THREE.MathUtils.damp(shell.current.scale.x, target, 5, dt)
+      shell.current.scale.setScalar(s)
+      shell.current.rotation.y -= dt * 0.12
+      shell.current.rotation.x += dt * 0.05
     }
-    points.current.geometry.attributes.position.needsUpdate = true
-    points.current.rotation.z = Math.sin(t * 0.15) * 0.12
+    if (core.current) {
+      core.current.material.emissiveIntensity = THREE.MathUtils.damp(
+        core.current.material.emissiveIntensity,
+        hovered ? 0.95 : 0.42 + Math.sin(t * 1.2) * 0.06,
+        5,
+        dt
+      )
+    }
+    if (inner.current) {
+      inner.current.rotation.y += dt * 0.4
+      inner.current.rotation.z -= dt * 0.25
+      const s = 0.52 + Math.sin(t * 1.6) * 0.03
+      inner.current.scale.setScalar(s)
+    }
   })
 
   return (
-    <points ref={points}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.028}
-        color={PALETTE.slate}
-        transparent
-        opacity={0.7}
-        sizeAttenuation
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
-  )
-}
-
-export default function VaultCore() {
-  const hovered = useRef(false)
-
-  return (
     <>
-      <ambientLight intensity={0.35} />
-      <directionalLight position={[4, 6, 5]} intensity={1.5} color={PALETTE.slate} />
-      <pointLight position={[-5, -2, -4]} intensity={22} color={PALETTE.indigo} distance={18} />
-      <pointLight position={[3, 2, 4]} intensity={16} color={PALETTE.teal} distance={16} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[4, 5, 4]} intensity={1.1} color={PALETTE.mist} />
+      <directionalLight position={[-5, -2, -3]} intensity={0.5} color={PALETTE.indigo} />
+      <pointLight position={[0, 0, 0]} intensity={7} color={PALETTE.teal} distance={6} />
 
-      <DragGroup autoSpin={0.12} parallax={0.22}>
+      <DragGroup autoSpin={0.5} parallax={0.9}>
         <group
-          onPointerOver={() => (hovered.current = true)}
-          onPointerOut={() => (hovered.current = false)}
+          onPointerOver={(e) => {
+            e.stopPropagation()
+            setHovered(true)
+          }}
+          onPointerOut={(e) => {
+            e.stopPropagation()
+            setHovered(false)
+          }}
         >
-          <Core hovered={hovered} />
-          {/* hit-area tak terlihat supaya drag terasa longgar */}
-          <mesh visible={false}>
-            <sphereGeometry args={[2.1, 12, 12]} />
-            <meshBasicMaterial />
+          <mesh ref={core}>
+            <icosahedronGeometry args={[1.35, 1]} />
+            <meshStandardMaterial
+              color={PALETTE.slate}
+              emissive={PALETTE.teal}
+              emissiveIntensity={0.42}
+              roughness={0.22}
+              metalness={0.95}
+              flatShading
+            />
+          </mesh>
+
+          <mesh ref={shell} scale={1.16}>
+            <icosahedronGeometry args={[1.35, 1]} />
+            <meshBasicMaterial
+              color={hovered ? PALETTE.amber : PALETTE.steel}
+              wireframe
+              transparent
+              opacity={hovered ? 0.5 : 0.28}
+            />
+          </mesh>
+
+          <mesh ref={inner} scale={0.52}>
+            <octahedronGeometry args={[1, 0]} />
+            <meshStandardMaterial
+              color={PALETTE.mist}
+              emissive={PALETTE.amber}
+              emissiveIntensity={0.7}
+              roughness={0.15}
+              metalness={1}
+              flatShading
+            />
           </mesh>
         </group>
-      </DragGroup>
 
-      <OrbitDust />
+        <Shards />
+      </DragGroup>
     </>
   )
 }
