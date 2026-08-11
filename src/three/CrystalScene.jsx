@@ -2,129 +2,137 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from './DragGroup'
-import { PALETTE, getPerfProfile, seededRandom } from './geo'
+import { PALETTE, facetedGeometry, getPerfProfile } from './geo'
 
 /**
- * HERO — kristal polygon low-poly.
- * Drag untuk memutar, hover menaikkan emisi, pecahan mengorbit menjauh.
+ * SECTION 1 (hero) - inti kunci terenkripsi.
+ * Inti low-poly dipahat, dikurung sangkar wireframe, dikelilingi pecahan
+ * kunci yang mengorbit. Drag memutar; hover menaikkan cahaya dan
+ * mengembangkan sangkar.
  */
 
-function Shard({ position, rotation, scale, speed, hovered }) {
+function Shards({ hot }) {
   const ref = useRef()
-  const base = useMemo(() => new THREE.Vector3(...position), [position])
+  const { low } = useMemo(getPerfProfile, [])
+  const count = low ? 9 : 16
 
-  useFrame((state, delta) => {
-    const m = ref.current
-    if (!m) return
-    const t = state.clock.elapsedTime
+  const shards = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        radius: 2.1 + (i % 4) * 0.28,
+        speed: 0.12 + (i % 5) * 0.045,
+        offset: (i / count) * Math.PI * 2,
+        tilt: (i % 3) * 0.42 - 0.42,
+        scale: 0.09 + (i % 3) * 0.045
+      })),
+    [count]
+  )
+
+  useFrame((frame, delta) => {
+    if (!ref.current) return
+    const t = frame.clock.elapsedTime
     const dt = Math.min(delta, 0.05)
-    const push = hovered ? 1.18 : 1
-    m.position.x = THREE.MathUtils.damp(m.position.x, base.x * push, 4, dt)
-    m.position.z = THREE.MathUtils.damp(m.position.z, base.z * push, 4, dt)
-    m.position.y = base.y + Math.sin(t * speed + base.x) * 0.12
-    m.rotation.x += dt * speed * 0.35
-    m.rotation.z += dt * speed * 0.2
+
+    ref.current.children.forEach((child, i) => {
+      const s = shards[i]
+      const spread = hot ? 1.16 : 1
+      const a = t * s.speed + s.offset
+      child.position.set(
+        Math.cos(a) * s.radius * spread,
+        Math.sin(a * 1.3 + s.tilt) * 0.72,
+        Math.sin(a) * s.radius * spread
+      )
+      child.rotation.x += dt * 0.5
+      child.rotation.y += dt * 0.32
+    })
   })
 
   return (
-    <mesh ref={ref} position={position} rotation={rotation} scale={scale}>
-      <tetrahedronGeometry args={[1, 0]} />
-      <meshStandardMaterial
-        color={PALETTE.steel}
-        emissive={PALETTE.teal}
-        emissiveIntensity={hovered ? 0.5 : 0.22}
-        roughness={0.35}
-        metalness={0.75}
-        flatShading
-      />
-    </mesh>
+    <group ref={ref}>
+      {shards.map((s, i) => (
+        <mesh key={i} scale={s.scale}>
+          <tetrahedronGeometry args={[1, 0]} />
+          <meshStandardMaterial
+            color={i % 3 === 0 ? PALETTE.copper : PALETTE.mist}
+            emissive={i % 3 === 0 ? PALETTE.copper : PALETTE.teal}
+            emissiveIntensity={hot ? 0.6 : 0.25}
+            roughness={0.35}
+            metalness={0.85}
+            flatShading
+          />
+        </mesh>
+      ))}
+    </group>
   )
 }
 
-function Crystal() {
-  const [hovered, setHovered] = useState(false)
+function Core() {
+  const [hot, setHot] = useState(false)
   const core = useRef()
-  const halo = useRef()
+  const cage = useRef()
+  const { low } = useMemo(getPerfProfile, [])
 
-  const shards = useMemo(() => {
-    const rand = seededRandom(7)
-    const { low } = getPerfProfile()
-    const count = low ? 9 : 16
-    return Array.from({ length: count }, (_, i) => {
-      const angle = (i / count) * Math.PI * 2
-      const radius = 2.5 + rand() * 1.1
-      return {
-        key: i,
-        position: [Math.cos(angle) * radius, (rand() - 0.5) * 2.6, Math.sin(angle) * radius],
-        rotation: [rand() * Math.PI, rand() * Math.PI, rand() * Math.PI],
-        scale: 0.14 + rand() * 0.2,
-        speed: 0.4 + rand() * 0.8
-      }
-    })
-  }, [])
-
-  const edges = useMemo(
-    () => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.55, 1)),
+  const coreGeo = useMemo(() => facetedGeometry(1.35, low ? 1 : 2, 0.14, 1.2), [low])
+  const cageEdges = useMemo(
+    () => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(2.05, 1)),
     []
   )
 
-  useFrame((state, delta) => {
+  useFrame((frame, delta) => {
     const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
+    const t = frame.clock.elapsedTime
+
     if (core.current) {
-      const s = THREE.MathUtils.damp(core.current.scale.x, hovered ? 1.08 : 1, 6, dt)
+      const pulse = 1 + Math.sin(t * 1.4) * 0.015
+      const s = THREE.MathUtils.damp(core.current.scale.x, (hot ? 1.06 : 1) * pulse, 5, dt)
       core.current.scale.setScalar(s)
       core.current.material.emissiveIntensity = THREE.MathUtils.damp(
         core.current.material.emissiveIntensity,
-        hovered ? 0.72 : 0.3,
-        5,
+        hot ? 0.85 : 0.35,
+        4,
         dt
       )
     }
-    if (halo.current) {
-      halo.current.rotation.y = -t * 0.12
-      halo.current.rotation.x = Math.sin(t * 0.2) * 0.15
+
+    if (cage.current) {
+      cage.current.rotation.y -= dt * 0.14
+      cage.current.rotation.z += dt * 0.05
+      const s = THREE.MathUtils.damp(cage.current.scale.x, hot ? 1.12 : 1, 4, dt)
+      cage.current.scale.setScalar(s)
     }
   })
 
   return (
-    <DragGroup autoSpin={0.35} parallax={1}>
-      <mesh
-        ref={core}
+    <DragGroup autoSpin={0.18} parallax={0.7} maxPitch={0.5}>
+      <group
         onPointerOver={(e) => {
           e.stopPropagation()
-          setHovered(true)
+          setHot(true)
         }}
-        onPointerOut={() => setHovered(false)}
+        onPointerOut={() => setHot(false)}
       >
-        <icosahedronGeometry args={[1.55, 1]} />
-        <meshStandardMaterial
-          color={PALETTE.slate}
-          emissive={PALETTE.indigo}
-          emissiveIntensity={0.3}
-          roughness={0.22}
-          metalness={0.9}
-          flatShading
-        />
-      </mesh>
+        <mesh ref={core} geometry={coreGeo}>
+          <meshStandardMaterial
+            color={PALETTE.slate}
+            emissive={PALETTE.indigo}
+            emissiveIntensity={0.35}
+            roughness={0.28}
+            metalness={0.92}
+            flatShading
+          />
+        </mesh>
 
-      <lineSegments geometry={edges} ref={halo} scale={1.34}>
-        <lineBasicMaterial color={PALETTE.teal} transparent opacity={0.32} />
-      </lineSegments>
+        <lineSegments ref={cage} geometry={cageEdges}>
+          <lineBasicMaterial color={PALETTE.teal} transparent opacity={hot ? 0.45 : 0.22} />
+        </lineSegments>
 
-      <mesh scale={1.9} rotation={[Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[1.5, 1.53, 64]} />
-        <meshBasicMaterial
-          color={PALETTE.mist}
-          transparent
-          opacity={0.12}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+        <mesh visible={false}>
+          <sphereGeometry args={[2.2, 12, 12]} />
+          <meshBasicMaterial />
+        </mesh>
+      </group>
 
-      {shards.map((s) => (
-        <Shard key={s.key} {...s} hovered={hovered} />
-      ))}
+      <Shards hot={hot} />
     </DragGroup>
   )
 }
@@ -133,10 +141,10 @@ export default function CrystalScene() {
   return (
     <>
       <ambientLight intensity={0.45} />
-      <directionalLight position={[4, 6, 5]} intensity={1.15} color={PALETTE.mist} />
-      <pointLight position={[-5, -2, -4]} intensity={22} distance={18} color={PALETTE.indigo} />
-      <pointLight position={[4, -3, 3]} intensity={16} distance={16} color={PALETTE.teal} />
-      <Crystal />
+      <directionalLight position={[4, 6, 5]} intensity={1.05} color={PALETTE.mist} />
+      <pointLight position={[-5, -1, 3]} intensity={22} distance={18} color={PALETTE.indigo} />
+      <pointLight position={[4, 3, -4]} intensity={16} distance={16} color={PALETTE.copper} />
+      <Core />
     </>
   )
 }

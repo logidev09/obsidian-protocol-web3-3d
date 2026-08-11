@@ -1,51 +1,57 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { prefersReducedMotion } from './geo'
 
 /**
- * Grup yang bisa diputar dengan drag mouse, punya inersia, auto-spin halus,
- * dan parallax ringan mengikuti pointer.
+ * Grup yang bisa diputar dengan drag mouse, punya inersia, dan kembali
+ * berputar pelan sendiri saat dilepas.
  *
- * Catatan penting untuk kenyamanan scroll: drag HANYA diaktifkan untuk
- * mouse/pen. Di layar sentuh, gesture dibiarkan ke browser supaya halaman
- * tetap bisa di-scroll dengan jari di atas canvas.
+ * Kunci kenyamanan scroll: pointer bertipe 'touch' SENGAJA diabaikan.
+ * Di HP/tablet sapuan jari tetap men-scroll halaman - canvas tidak pernah
+ * merebut gestur vertikal. Perangkat sentuh tetap dapat auto-spin.
  */
 export default function DragGroup({
   children,
   autoSpin = 0.25,
-  parallax = 1,
+  parallax = 0.5,
   maxPitch = 0.55,
-  ...props
+  damping = 0.92
 }) {
-  const group = useRef()
-  const drag = useRef({ active: false, lastX: 0, lastY: 0, vx: 0, vy: 0, yaw: 0, pitch: 0 })
+  const pivot = useRef()
+  const state = useRef({ dragging: false, lastX: 0, lastY: 0, velX: 0, velY: 0, yaw: 0, pitch: 0 })
   const { gl } = useThree()
-  const reduced = prefersReducedMotion()
 
   useEffect(() => {
     const el = gl.domElement
-    const s = drag.current
+    const s = state.current
 
     const onDown = (e) => {
       if (e.pointerType === 'touch') return
-      s.active = true
+      s.dragging = true
       s.lastX = e.clientX
       s.lastY = e.clientY
-      el.classList.add('is-grabbing')
-    }
-    const onMove = (e) => {
-      if (!s.active) return
-      s.vx += (e.clientX - s.lastX) * 0.0045
-      s.vy += (e.clientY - s.lastY) * 0.0035
-      s.lastX = e.clientX
-      s.lastY = e.clientY
-    }
-    const onUp = () => {
-      s.active = false
-      el.classList.remove('is-grabbing')
+      el.style.cursor = 'grabbing'
     }
 
+    const onMove = (e) => {
+      if (!s.dragging) return
+      const dx = e.clientX - s.lastX
+      const dy = e.clientY - s.lastY
+      s.lastX = e.clientX
+      s.lastY = e.clientY
+      s.velX = dx * 0.005
+      s.velY = dy * 0.004
+      s.yaw += s.velX
+      s.pitch = THREE.MathUtils.clamp(s.pitch + s.velY, -maxPitch, maxPitch)
+    }
+
+    const onUp = () => {
+      if (!s.dragging) return
+      s.dragging = false
+      el.style.cursor = 'grab'
+    }
+
+    el.style.cursor = 'grab'
     el.addEventListener('pointerdown', onDown)
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -56,37 +62,27 @@ export default function DragGroup({
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
-      el.classList.remove('is-grabbing')
+      el.style.cursor = ''
     }
-  }, [gl])
+  }, [gl, maxPitch])
 
-  useFrame((state, delta) => {
-    const g = group.current
+  useFrame((frame, delta) => {
+    const s = state.current
+    const g = pivot.current
     if (!g) return
-    const s = drag.current
     const dt = Math.min(delta, 0.05)
 
-    s.yaw += s.vx
-    s.pitch += s.vy
-    s.pitch = THREE.MathUtils.clamp(s.pitch, -maxPitch, maxPitch)
+    if (!s.dragging) {
+      s.velX *= damping
+      s.velY *= damping
+      s.yaw += s.velX + autoSpin * dt
+      s.pitch = THREE.MathUtils.clamp(s.pitch + s.velY, -maxPitch, maxPitch)
+      s.pitch = THREE.MathUtils.damp(s.pitch, 0, 0.8, dt)
+    }
 
-    // inersia
-    const damp = s.active ? 0.75 : 0.94
-    s.vx *= damp
-    s.vy *= damp
-
-    if (!s.active && !reduced) s.yaw += autoSpin * dt * 0.35
-
-    const px = state.pointer.x * 0.12 * parallax
-    const py = state.pointer.y * 0.08 * parallax
-
-    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.yaw + px, 8, dt)
-    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, s.pitch - py, 8, dt)
+    g.rotation.y = s.yaw + frame.pointer.x * parallax * 0.25
+    g.rotation.x = s.pitch - frame.pointer.y * parallax * 0.18
   })
 
-  return (
-    <group ref={group} {...props}>
-      {children}
-    </group>
-  )
+  return <group ref={pivot}>{children}</group>
 }
