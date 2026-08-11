@@ -1,64 +1,73 @@
 import * as THREE from 'three'
 
 /**
- * Palet "muted cyberpunk" — gelap, low-saturation, tanpa neon norak.
- * Semua aksen dipilih di rentang saturasi 35–60% supaya nyaman dilihat lama.
+ * Palet — cyberpunk yang tenang.
+ * Tidak ada neon murni (#00ffff / #ff00ff). Semua warna diturunkan
+ * saturasinya dan didinginkan supaya nyaman dibaca lama.
  */
 export const PALETTE = {
-  void: '#06080b',
-  ink: '#0b1016',
-  steel: '#16202b',
-  slate: '#7d8b9c',
-  teal: '#4fa8a0',
+  ink: '#0b0f14',
+  steel: '#8fa3b0',
+  slate: '#b9c6cf',
+  teal: '#4fb3a6',
   indigo: '#5b6ea8',
-  violet: '#7a6bb0',
-  sand: '#c2a878'
+  violet: '#8c7bb5',
+  sand: '#c8a675'
 }
 
 /** Titik terdistribusi merata di permukaan bola (spiral Fibonacci). */
 export function fibonacciSphere(count, radius = 1) {
-  const points = []
+  const pts = []
   const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / (count - 1 || 1)) * 2
+    const y = 1 - (i / (count - 1)) * 2
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
-    points.push(
-      new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
+    pts.push(
+      new THREE.Vector3(
+        Math.cos(theta) * r * radius,
+        y * radius,
+        Math.sin(theta) * r * radius
+      )
     )
   }
-  return points
+  return pts
 }
 
-/** Box dengan sudut membulat — dipakai untuk badan perangkat vault. */
-export function roundedBoxGeometry(w, h, d, radius = 0.15, segments = 4) {
+/** Balok bersudut tumpul — dipakai untuk bodi perangkat. */
+export function roundedBoxGeometry(w, h, d, r = 0.2, seg = 4) {
   const shape = new THREE.Shape()
   const x = -w / 2
   const y = -h / 2
-  const r = Math.min(radius, w / 2, h / 2)
+  const rr = Math.min(r, w / 2, h / 2)
 
-  shape.moveTo(x + r, y)
-  shape.lineTo(x + w - r, y)
-  shape.quadraticCurveTo(x + w, y, x + w, y + r)
-  shape.lineTo(x + w, y + h - r)
-  shape.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
-  shape.lineTo(x + r, y + h)
-  shape.quadraticCurveTo(x, y + h, x, y + h - r)
-  shape.lineTo(x, y + r)
-  shape.quadraticCurveTo(x, y, x + r, y)
+  shape.moveTo(x + rr, y)
+  shape.lineTo(x + w - rr, y)
+  shape.quadraticCurveTo(x + w, y, x + w, y + rr)
+  shape.lineTo(x + w, y + h - rr)
+  shape.quadraticCurveTo(x + w, y + h, x + w - rr, y + h)
+  shape.lineTo(x + rr, y + h)
+  shape.quadraticCurveTo(x, y + h, x, y + h - rr)
+  shape.lineTo(x, y + rr)
+  shape.quadraticCurveTo(x, y, x + rr, y)
 
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: d,
     bevelEnabled: true,
-    bevelThickness: Math.min(0.05, d / 4),
-    bevelSize: Math.min(0.05, r / 3),
-    bevelSegments: segments,
-    curveSegments: 12
+    bevelThickness: 0.04,
+    bevelSize: 0.04,
+    bevelSegments: seg,
+    curveSegments: 8
   })
   geo.center()
-  geo.computeVertexNormals()
   return geo
 }
 
-/** Konversi derajat ke radian, dipakai supaya angka rotasi lebih terbaca. */
-export const deg = (d) => (d * Math.PI) / 180
+/** Nilai acak deterministik — layout identik tiap reload. */
+export function seeded(seed) {
+  let s = seed
+  return () => {
+    s = (s * 1664525 + 1013904223) % 4294967296
+    return s / 4294967296
+  }
+}
