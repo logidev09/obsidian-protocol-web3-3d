@@ -1,12 +1,15 @@
-/** Rig pencahayaan bersama — warna redup, kontras terkontrol (bukan neon norak). */
-export default function Lights({ accent = '#3fd8c2', fill = '#7c8cff', intensity = 1 }) {
+export default function Lights({
+  key0 = '#8a9bff',
+  key1 = '#3fd0c9',
+  ambient = 0.55,
+  intensity = 1.1
+}) {
   return (
     <>
-      <ambientLight intensity={0.35 * intensity} color="#8ea0b5" />
-      <directionalLight position={[4, 6, 5]} intensity={1.1 * intensity} color="#dfe7f2" />
-      <pointLight position={[-4, -2, -3]} intensity={2.2 * intensity} color={fill} distance={16} decay={2} />
-      <pointLight position={[3, -1.5, 3]} intensity={1.6 * intensity} color={accent} distance={14} decay={2} />
-      <spotLight position={[0, 7, 2]} angle={0.5} penumbra={1} intensity={1.2 * intensity} color="#ffffff" />
+      <ambientLight intensity={ambient} color="#9aa6c8" />
+      <directionalLight position={[4, 6, 5]} intensity={intensity} color={key0} />
+      <directionalLight position={[-5, -2, -4]} intensity={intensity * 0.55} color={key1} />
+      <pointLight position={[0, -4, 3]} intensity={0.6} color="#4a5578" />
     </>
   )
 }

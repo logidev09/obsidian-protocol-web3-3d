@@ -2,14 +2,14 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
-/** Partikel latar tipis — volume rendah supaya tidak mengganggu keterbacaan. */
-export default function Particles({ count = 220, color = '#7c8cff', radius = 7 }) {
+/** Debu partikel halus — memberi kedalaman tanpa membebani GPU. */
+export default function Particles({ count = 260, radius = 9, color = '#7c8cff', size = 0.028 }) {
   const ref = useRef()
 
   const positions = useMemo(() => {
     const arr = new Float32Array(count * 3)
     for (let i = 0; i < count; i++) {
-      const r = radius * Math.cbrt(Math.random())
+      const r = radius * (0.35 + Math.random() * 0.65)
       const theta = Math.random() * Math.PI * 2
       const phi = Math.acos(2 * Math.random() - 1)
       arr[i * 3] = r * Math.sin(phi) * Math.cos(theta)
@@ -19,23 +19,25 @@ export default function Particles({ count = 220, color = '#7c8cff', radius = 7 }
     return arr
   }, [count, radius])
 
-  useFrame((state) => {
-    if (ref.current) {
-      ref.current.rotation.y = state.clock.elapsedTime * 0.02
-      ref.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.1) * 0.05
-    }
+  useFrame((_, delta) => {
+    if (ref.current) ref.current.rotation.y += delta * 0.02
   })
 
   return (
     <points ref={ref}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
+        <bufferAttribute
+          attach="attributes-position"
+          count={count}
+          array={positions}
+          itemSize={3}
+ある        />
       </bufferGeometry>
       <pointsMaterial
-        size={0.028}
+        size={size}
         color={color}
         transparent
-        opacity={0.55}
+        opacity={0.5}
         sizeAttenuation
         depthWrite={false}
         blending={THREE.AdditiveBlending}
