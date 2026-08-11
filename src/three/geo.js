@@ -1,73 +1,64 @@
 import * as THREE from 'three'
 
 /**
- * Palet: cyberpunk tapi kalem. Tidak ada magenta/cyan neon jenuh —
- * semua warna diturunkan saturasinya dan dipakai sebagai aksen, bukan bidang besar.
+ * Palet "muted cyberpunk" — gelap, low-saturation, tanpa neon norak.
+ * Semua aksen dipilih di rentang saturasi 35–60% supaya nyaman dilihat lama.
  */
 export const PALETTE = {
   void: '#06080b',
-  panel: '#111a24',
-  slate: '#8fa3b8',
-  teal: '#4fb3a5',
-  indigo: '#5b6ee1',
-  violet: '#8a6fd1',
-  sand: '#d8b46a'
+  ink: '#0b1016',
+  steel: '#16202b',
+  slate: '#7d8b9c',
+  teal: '#4fa8a0',
+  indigo: '#5b6ea8',
+  violet: '#7a6bb0',
+  sand: '#c2a878'
 }
 
-/** Interpolasi yang stabil terhadap frame-rate (pengganti lerp mentah). */
-export function damp(current, target, lambda, dt) {
-  return THREE.MathUtils.damp(current, target, lambda, dt)
-}
-
-export const clamp = THREE.MathUtils.clamp
-
-/** Sebaran titik merata di permukaan bola — dipakai untuk partikel & node jaringan. */
+/** Titik terdistribusi merata di permukaan bola (spiral Fibonacci). */
 export function fibonacciSphere(count, radius = 1) {
   const points = []
-  const offset = 2 / count
-  const increment = Math.PI * (3 - Math.sqrt(5))
+  const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const y = i * offset - 1 + offset / 2
+    const y = 1 - (i / (count - 1 || 1)) * 2
     const r = Math.sqrt(Math.max(0, 1 - y * y))
-    const phi = i * increment
+    const theta = golden * i
     points.push(
-      new THREE.Vector3(Math.cos(phi) * r * radius, y * radius, Math.sin(phi) * r * radius)
+      new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
     )
   }
   return points
 }
 
-/** Box bersudut membulat via extrude — supaya perangkat 3D tidak terlihat kotak murahan. */
-export function roundedBoxGeometry(width, height, depth, radius = 0.2, steps = 6) {
-  const w = width / 2 - radius
-  const h = height / 2 - radius
+/** Box dengan sudut membulat — dipakai untuk badan perangkat vault. */
+export function roundedBoxGeometry(w, h, d, radius = 0.15, segments = 4) {
   const shape = new THREE.Shape()
-  shape.moveTo(-w, -h - radius)
-  shape.lineTo(w, -h - radius)
-  shape.quadraticCurveTo(w + radius, -h - radius, w + radius, -h)
-  shape.lineTo(w + radius, h)
-  shape.quadraticCurveTo(w + radius, h + radius, w, h + radius)
-  shape.lineTo(-w, h + radius)
-  shape.quadraticCurveTo(-w - radius, h + radius, -w - radius, h)
-  shape.lineTo(-w - radius, -h)
-  shape.quadraticCurveTo(-w - radius, -h - radius, -w, -h - radius)
+  const x = -w / 2
+  const y = -h / 2
+  const r = Math.min(radius, w / 2, h / 2)
+
+  shape.moveTo(x + r, y)
+  shape.lineTo(x + w - r, y)
+  shape.quadraticCurveTo(x + w, y, x + w, y + r)
+  shape.lineTo(x + w, y + h - r)
+  shape.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+  shape.lineTo(x + r, y + h)
+  shape.quadraticCurveTo(x, y + h, x, y + h - r)
+  shape.lineTo(x, y + r)
+  shape.quadraticCurveTo(x, y, x + r, y)
 
   const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: depth - radius * 0.5,
+    depth: d,
     bevelEnabled: true,
-    bevelThickness: radius * 0.35,
-    bevelSize: radius * 0.35,
-    bevelSegments: steps,
-    curveSegments: steps
+    bevelThickness: Math.min(0.05, d / 4),
+    bevelSize: Math.min(0.05, r / 3),
+    bevelSegments: segments,
+    curveSegments: 12
   })
   geo.center()
+  geo.computeVertexNormals()
   return geo
 }
 
-/** Garis lengkung antar dua titik di permukaan bola. */
-export function arcBetween(a, b, lift = 0.35, segments = 24) {
-  const mid = a.clone().add(b).multiplyScalar(0.5)
-  mid.normalize().multiplyScalar(a.length() * (1 + lift))
-  const curve = new THREE.QuadraticBezierCurve3(a, mid, b)
-  return curve.getPoints(segments)
-}
+/** Konversi derajat ke radian, dipakai supaya angka rotasi lebih terbaca. */
+export const deg = (d) => (d * Math.PI) / 180

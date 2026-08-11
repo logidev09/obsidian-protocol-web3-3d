@@ -1,24 +1,25 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { damp, clamp } from './geo'
+import * as THREE from 'three'
 
 /**
- * Pembungkus interaksi mouse untuk objek 3D.
+ * Wadah rotasi universal untuk semua scene.
  *
- * Kunci kenyamanan scroll: pointer events dipasang di elemen canvas dengan
- * `touch-action: pan-y`, dan hanya drag horizontal/vertikal setelah ambang batas
- * yang menahan halaman. Wheel TIDAK pernah di-capture, jadi scroll halaman
- * selalu lolos ke Lenis — tidak ada "scroll jacking".
+ * - Drag kiri-kanan/atas-bawah memutar objek (mouse + touch).
+ * - Tanpa drag, objek berputar pelan sendiri dan mengikuti pointer (parallax).
+ * - `touch-action: pan-y` pada canvas dijaga di CSS supaya scroll vertikal
+ *   di mobile tetap lancar — drag horizontal untuk memutar, swipe vertikal
+ *   tetap menggulirkan halaman.
  */
 export default function DragGroup({
   children,
-  autoSpin = 0.1,
+  autoSpin = 0.2,
   parallax = 0.2,
-  clampX = 0.65,
+  clampX = 0.85,
   scale = 1
 }) {
   const group = useRef()
-  const gl = useThree((s) => s.gl)
+  const { gl } = useThree()
 
   const state = useRef({
     dragging: false,
@@ -26,11 +27,9 @@ export default function DragGroup({
     lastY: 0,
     velX: 0,
     velY: 0,
-    rotY: 0,
     rotX: 0,
-    pointerX: 0,
-    pointerY: 0,
-    hasPointer: false
+    rotY: 0,
+    idle: 0
   })
 
   useEffect(() => {
@@ -39,6 +38,7 @@ export default function DragGroup({
 
     const down = (e) => {
       s.dragging = true
+      s.idle = 0
       s.lastX = e.clientX
       s.lastY = e.clientY
       el.setPointerCapture?.(e.pointerId)
@@ -46,17 +46,13 @@ export default function DragGroup({
     }
 
     const move = (e) => {
-      const rect = el.getBoundingClientRect()
-      s.pointerX = ((e.clientX - rect.left) / rect.width) * 2 - 1
-      s.pointerY = ((e.clientY - rect.top) / rect.height) * 2 - 1
-      s.hasPointer = true
       if (!s.dragging) return
       const dx = e.clientX - s.lastX
       const dy = e.clientY - s.lastY
       s.lastX = e.clientX
       s.lastY = e.clientY
-      s.velX += dx * 0.005
-      s.velY += dy * 0.004
+      s.velY += dx * 0.005
+      s.velX += dy * 0.004
     }
 
     const up = (e) => {
@@ -65,46 +61,60 @@ export default function DragGroup({
       el.style.cursor = 'grab'
     }
 
-    const leave = () => {
-      s.hasPointer = false
-      s.dragging = false
-    }
-
     el.style.cursor = 'grab'
-    el.style.touchAction = 'pan-y'
     el.addEventListener('pointerdown', down)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-    el.addEventListener('pointerleave', leave)
+    window.addEventListener('pointercancel', up)
 
     return () => {
       el.removeEventListener('pointerdown', down)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      el.removeEventListener('pointerleave', leave)
+      window.removeEventListener('pointercancel', up)
     }
   }, [gl])
 
-  useFrame((_, delta) => {
+  useFrame((frame, delta) => {
     const dt = Math.min(delta, 0.05)
     const s = state.current
 
-    s.rotY += s.velX
-    s.rotX = clamp(s.rotX + s.velY, -clampX, clampX)
+    // inersia
+    s.rotY += s.velY
+    s.rotX += s.velX
+    s.velY *= 0.92
+    s.velX *= 0.92
+    s.rotX = THREE.MathUtils.clamp(s.rotX, -clampX, clampX)
 
-    // inersia: lepas drag → objek melambat halus, bukan berhenti mendadak
-    s.velX *= s.dragging ? 0.6 : 0.92
-    s.velY *= s.dragging ? 0.6 : 0.9
+    if (!s.dragging) {
+      s.idle += dt
+      // auto-spin baru aktif setelah pointer dilepas sebentar
+      if (s.idle > 0.8) s.rotY += autoSpin * dt
+      // tarik sumbu X kembali ke netral supaya komposisi tetap rapi
+      s.rotX = THREE.MathUtils.damp(s.rotX, 0, 1.2, dt)
+    }
 
-    if (!s.dragging) s.rotY += autoSpin * dt
+    const px = frame.pointer.x * parallax
+    const py = frame.pointer.y * parallax
 
-    const targetX = s.hasPointer ? s.pointerX * parallax : 0
-    const targetY = s.hasPointer ? -s.pointerY * parallax * 0.6 : 0
-
-    group.current.rotation.y = s.rotY
-    group.current.rotation.x = s.rotX + targetY * 0.35
-    group.current.position.x = damp(group.current.position.x, targetX, 3, dt)
-    group.current.position.y = damp(group.current.position.y, targetY * 0.5, 3, dt)
+    group.current.rotation.y = THREE.MathUtils.damp(
+      group.current.rotation.y,
+      s.rotY + px * 0.6,
+      6,
+      dt
+    )
+    group.current.rotation.x = THREE.MathUtils.damp(
+      group.current.rotation.x,
+      s.rotX - py * 0.5,
+      6,
+      dt
+    )
+    group.current.position.y = THREE.MathUtils.damp(
+      group.current.position.y,
+      Math.sin(frame.clock.elapsedTime * 0.6) * 0.08,
+      3,
+      dt
+    )
   })
 
   return (
