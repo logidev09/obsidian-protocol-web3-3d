@@ -1,131 +1,114 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from '../DragGroup'
 import { PALETTE, roundedBoxGeometry } from '../geo'
 
 /**
- * PRODUK — perangkat vault fisik. Bisa diputar 360° dengan drag.
- * Hover pada bagian tertentu menyalakan indikator dan mengangkat panel belakang.
+ * Product: perangkat vault fisik.
+ * - Drag → memutar perangkat
+ * - Prop `exploded` (dikontrol tombol di UI) → lapisan memisah
+ *   sehingga tiap komponen terlihat: casing, papan, elemen aman, layar
  */
-function Device() {
-  const [active, setActive] = useState(null)
-  const led = useRef()
-  const backplate = useRef()
 
-  const bodyGeo = useMemo(() => roundedBoxGeometry(2.6, 4.2, 0.42, 0.28), [])
-  const screenGeo = useMemo(() => roundedBoxGeometry(2.0, 2.2, 0.06, 0.12), [])
-  const plateGeo = useMemo(() => roundedBoxGeometry(2.3, 3.8, 0.1, 0.2), [])
-
-  useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
-
-    led.current.material.emissiveIntensity =
-      1.2 + Math.sin(t * 2.4) * 0.8 + (active === 'led' ? 2 : 0)
-
-    const z = active === 'plate' ? -0.55 : -0.24
-    backplate.current.position.z = THREE.MathUtils.damp(
-      backplate.current.position.z,
-      z,
-      5,
-      dt
+function Layer({ y, target, children }) {
+  const ref = useRef()
+  useFrame((_, delta) => {
+    if (!ref.current) return
+    ref.current.position.y = THREE.MathUtils.damp(
+      ref.current.position.y,
+      y + target,
+      4,
+      Math.min(delta, 0.05)
     )
   })
+  return <group ref={ref}>{children}</group>
+}
+
+function Device({ exploded }) {
+  const shellGeo = useMemo(() => roundedBoxGeometry(2.1, 3.4, 0.22, 0.28), [])
+  const boardGeo = useMemo(() => roundedBoxGeometry(1.8, 3.0, 0.06, 0.12), [])
+  const screenGeo = useMemo(() => roundedBoxGeometry(1.6, 1.05, 0.04, 0.1), [])
+  const glow = useRef()
+
+  useFrame((frame) => {
+    if (!glow.current) return
+    const t = frame.clock.elapsedTime
+    glow.current.material.emissiveIntensity = 0.85 + Math.sin(t * 2) * 0.18
+  })
+
+  const gap = exploded ? 1 : 0
 
   return (
-    <group rotation={[0.1, -0.35, 0.05]}>
-      {/* body */}
-      <mesh geometry={bodyGeo}>
-        <meshStandardMaterial color="#0e161e" roughness={0.34} metalness={0.92} />
-      </mesh>
+    <group rotation={[0.12, 0, 0]}>
+      {/* casing belakang */}
+      <Layer y={0} target={-gap * 0.75}>
+        <mesh geometry={shellGeo} position={[0, 0, -0.18]}>
+          <meshStandardMaterial color={PALETTE.ink} roughness={0.42} metalness={0.85} />
+        </mesh>
+      </Layer>
 
-      {/* rangka aksen */}
-      <mesh geometry={bodyGeo} scale={[1.012, 1.006, 0.98]}>
-        <meshBasicMaterial color={PALETTE.indigo} wireframe transparent opacity={0.18} />
-      </mesh>
+      {/* papan sirkuit + secure element */}
+      <Layer y={0} target={-gap * 0.25}>
+        <group>
+          <mesh geometry={boardGeo}>
+            <meshStandardMaterial color={PALETTE.slate} roughness={0.55} metalness={0.5} />
+          </mesh>
+          {/* secure element — satu-satunya bagian yang benar-benar menyala */}
+          <mesh ref={glow} position={[0, -0.75, 0.08]}>
+            <boxGeometry args={[0.42, 0.42, 0.08]} />
+            <meshStandardMaterial
+              color={PALETTE.ink}
+              emissive={PALETTE.teal}
+              emissiveIntensity={0.9}
+              roughness={0.3}
+              metalness={0.8}
+              toneMapped={false}
+            />
+          </mesh>
+          {[-0.55, 0, 0.55].map((x) => (
+            <mesh key={x} position={[x, 0.35, 0.06]}>
+              <boxGeometry args={[0.22, 0.5, 0.05]} />
+              <meshStandardMaterial color={PALETTE.steel} roughness={0.5} metalness={0.7} />
+            </mesh>
+          ))}
+        </group>
+      </Layer>
 
       {/* layar */}
-      <mesh
-        geometry={screenGeo}
-        position={[0, 0.62, 0.24]}
-        onPointerOver={() => setActive('screen')}
-        onPointerOut={() => setActive(null)}
-      >
-        <meshStandardMaterial
-          color="#08111a"
-          roughness={0.12}
-          metalness={0.4}
-          emissive={PALETTE.teal}
-          emissiveIntensity={active === 'screen' ? 0.55 : 0.2}
-        />
-      </mesh>
-
-      {/* baris grid di layar */}
-      {Array.from({ length: 7 }).map((_, i) => (
-        <mesh key={i} position={[0, 1.42 - i * 0.24, 0.28]}>
-          <planeGeometry args={[1.5 - (i % 3) * 0.35, 0.035]} />
-          <meshBasicMaterial
-            color={i === 2 ? PALETTE.sand : PALETTE.slate}
-            transparent
-            opacity={i === 2 ? 0.85 : 0.32}
+      <Layer y={0} target={gap * 0.35}>
+        <mesh geometry={screenGeo} position={[0, 0.72, 0.14]}>
+          <meshStandardMaterial
+            color="#04070a"
+            emissive={PALETTE.indigo}
+            emissiveIntensity={0.28}
+            roughness={0.12}
+            metalness={0.6}
           />
         </mesh>
-      ))}
+      </Layer>
 
-      {/* indikator LED */}
-      <mesh
-        ref={led}
-        position={[0, -1.05, 0.26]}
-        onPointerOver={() => setActive('led')}
-        onPointerOut={() => setActive(null)}
-      >
-        <cylinderGeometry args={[0.13, 0.13, 0.06, 6]} />
-        <meshStandardMaterial
-          color="#0d1620"
-          emissive={PALETTE.sand}
-          emissiveIntensity={1.4}
-          metalness={0.8}
-          roughness={0.3}
-        />
-      </mesh>
-
-      {/* tombol konfirmasi */}
-      {[-0.62, 0.62].map((x) => (
-        <mesh key={x} position={[x, -1.62, 0.2]}>
-          <cylinderGeometry args={[0.2, 0.2, 0.12, 6]} />
-          <meshStandardMaterial color="#18242f" metalness={0.85} roughness={0.35} flatShading />
-        </mesh>
-      ))}
-
-      {/* panel belakang yang terangkat saat hover */}
-      <mesh
-        ref={backplate}
-        geometry={plateGeo}
-        position={[0, 0, -0.24]}
-        onPointerOver={() => setActive('plate')}
-        onPointerOut={() => setActive(null)}
-      >
-        <meshStandardMaterial
-          color="#141f2a"
-          roughness={0.5}
-          metalness={0.7}
-          flatShading
-        />
-      </mesh>
+      {/* bezel depan */}
+      <Layer y={0} target={gap * 0.95}>
+        <lineSegments position={[0, 0, 0.22]}>
+          <edgesGeometry args={[shellGeo]} />
+          <lineBasicMaterial color={PALETTE.teal} transparent opacity={0.4} />
+        </lineSegments>
+      </Layer>
     </group>
   )
 }
 
-export default function VaultDevice() {
+export default function VaultDevice({ exploded = false }) {
   return (
     <>
       <ambientLight intensity={0.5} />
-      <directionalLight position={[4, 6, 5]} intensity={1.4} />
-      <directionalLight position={[-5, -2, -4]} intensity={0.5} color={PALETTE.violet} />
-      <pointLight position={[0, -3, 4]} intensity={18} color={PALETTE.teal} distance={14} />
-      <DragGroup autoSpin={0.22} parallax={0.14} clampX={0.5} scale={0.82}>
-        <Device />
+      <directionalLight position={[3, 5, 5]} intensity={1.2} color={PALETTE.mist} />
+      <pointLight position={[-4, 1, 3]} intensity={18} color={PALETTE.indigo} distance={14} />
+      <spotLight position={[0, 4, 4]} angle={0.5} penumbra={1} intensity={20} color={PALETTE.teal} />
+
+      <DragGroup autoSpin={0.7} parallax={0.5} scale={0.95}>
+        <Device exploded={exploded} />
       </DragGroup>
     </>
   )
