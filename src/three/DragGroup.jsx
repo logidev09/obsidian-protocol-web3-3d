@@ -1,141 +1,98 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { getPerfProfile } from './geo'
 
 /**
- * Wadah interaksi yang dipakai bersama oleh scene-scene 3D.
+ * Wadah interaksi mouse untuk objek 3D.
  *
- * - drag horizontal  -> yaw
- * - drag vertikal    -> pitch (dibatasi supaya objek tidak terbalik)
- * - lepas            -> inersia lalu kembali berputar pelan
- * - tanpa drag       -> objek condong halus mengikuti pointer (parallax)
+ * - Drag (tekan + geser) memutar objek pada sumbu Y dan X, dengan inersia.
+ * - Tanpa drag, objek berputar pelan sendiri + condong mengikuti pointer.
+ * - Sumbu X dibatasi agar objek tidak pernah terbalik.
  *
- * Yang penting untuk kenyamanan scroll: pointer capture hanya diambil setelah
- * gerakan horizontal melewati ambang kecil, sehingga swipe vertikal di layar
- * sentuh tetap menjadi scroll halaman, bukan rotasi objek.
+ * Kenyamanan scroll: komponen ini tidak pernah menangkap event wheel/touch
+ * vertikal, jadi scroll halaman selalu lolos ke browser.
  */
 export default function DragGroup({
   children,
   autoSpin = 0.2,
   parallax = 1,
-  maxPitch = 0.55,
   hitRadius = 3,
-  ...props
+  maxPitch = 0.55
 }) {
   const group = useRef()
-  const gl = useThree((s) => s.gl)
-
+  const state = useRef({ x: 0, y: 0, vx: 0, vy: 0, px: 0, py: 0 })
   const [dragging, setDragging] = useState(false)
-  const state = useRef({
-    yaw: 0,
-    pitch: 0,
-    velYaw: 0,
-    velPitch: 0,
-    lastX: 0,
-    lastY: 0,
-    startX: 0,
-    startY: 0,
-    armed: false,
-    captured: false
-  })
-
+  const { gl, pointer } = useThree()
   const { reducedMotion } = getPerfProfile()
 
-  useEffect(() => {
-    gl.domElement.style.cursor = dragging ? 'grabbing' : 'grab'
-    return () => {
-      gl.domElement.style.cursor = 'auto'
-    }
-  }, [dragging, gl])
+  const setCursor = (value) => {
+    gl.domElement.style.cursor = value
+  }
 
-  const onDown = (e) => {
+  const onPointerDown = (e) => {
     e.stopPropagation()
-    const s = state.current
-    s.armed = true
-    s.captured = false
-    s.startX = e.clientX
-    s.startY = e.clientY
-    s.lastX = e.clientX
-    s.lastY = e.clientY
+    e.target.setPointerCapture?.(e.pointerId)
+    setDragging(true)
+    setCursor('grabbing')
+    state.current.px = e.clientX
+    state.current.py = e.clientY
   }
 
-  const onMove = (e) => {
+  const onPointerMove = (e) => {
+    if (!dragging) return
     const s = state.current
-    if (!s.armed) return
-
-    const dx = e.clientX - s.lastX
-    const dy = e.clientY - s.lastY
-
-    if (!s.captured) {
-      const totalX = Math.abs(e.clientX - s.startX)
-      const totalY = Math.abs(e.clientY - s.startY)
-      // Belum cukup bergerak untuk disebut niat drag.
-      if (totalX < 4 && totalY < 4) return
-      // Gerakan didominasi vertikal -> biarkan jadi scroll halaman.
-      if (totalY > totalX * 1.2) {
-        s.armed = false
-        return
-      }
-      e.target.setPointerCapture?.(e.pointerId)
-      s.captured = true
-      setDragging(true)
-    }
-
-    s.velYaw = dx * 0.005
-    s.velPitch = dy * 0.004
-    s.yaw += s.velYaw
-    s.pitch = THREE.MathUtils.clamp(s.pitch + s.velPitch, -maxPitch, maxPitch)
-    s.lastX = e.clientX
-    s.lastY = e.clientY
+    const dx = (e.clientX - s.px) / 220
+    const dy = (e.clientY - s.py) / 260
+    s.px = e.clientX
+    s.py = e.clientY
+    s.vx = dy
+    s.vy = dx
+    s.x = THREE.MathUtils.clamp(s.x + dy, -maxPitch, maxPitch)
+    s.y += dx
   }
 
-  const onUp = (e) => {
-    const s = state.current
-    if (s.captured) e.target.releasePointerCapture?.(e.pointerId)
-    s.armed = false
-    s.captured = false
+  const endDrag = (e) => {
+    if (!dragging) return
+    e?.target?.releasePointerCapture?.(e.pointerId)
     setDragging(false)
+    setCursor('grab')
   }
 
-  useFrame((frame, delta) => {
+  useFrame((_, delta) => {
     const g = group.current
     if (!g) return
     const s = state.current
     const dt = Math.min(delta, 0.05)
 
-    if (!s.captured) {
-      // Inersia setelah dilepas.
-      s.velYaw *= 0.94
-      s.velPitch *= 0.9
-      s.yaw += s.velYaw
-      s.pitch = THREE.MathUtils.clamp(s.pitch + s.velPitch, -maxPitch, maxPitch)
+    if (!dragging) {
+      s.x = THREE.MathUtils.clamp(s.x + s.vx, -maxPitch, maxPitch)
+      s.y += s.vy + (reducedMotion ? 0 : autoSpin * dt)
+      s.vx *= 0.92
+      s.vy *= 0.94
 
-      if (!reducedMotion) s.yaw += autoSpin * dt
-      // Pitch perlahan kembali ke netral.
-      s.pitch = THREE.MathUtils.damp(s.pitch, 0, 1.2, dt)
+      const lean = parallax * 0.12
+      s.x = THREE.MathUtils.clamp(s.x + pointer.y * lean * dt, -maxPitch, maxPitch)
+      s.y += pointer.x * lean * dt
     }
 
-    const px = reducedMotion ? 0 : frame.pointer.x * 0.12 * parallax
-    const py = reducedMotion ? 0 : frame.pointer.y * 0.08 * parallax
-
-    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.yaw + px, 8, dt)
-    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, -s.pitch + py, 8, dt)
+    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, s.x, 9, dt)
+    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.y, 9, dt)
   })
 
   return (
-    <group ref={group} {...props}>
-      {/* Bidang tangkap tak terlihat supaya drag terasa di sekitar objek,
-          bukan hanya tepat di permukaannya. */}
+    <group ref={group}>
       <mesh
         visible={false}
-        onPointerDown={onDown}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        onPointerCancel={onUp}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onPointerOver={() => !dragging && setCursor('grab')}
+        onPointerOut={() => !dragging && setCursor('auto')}
       >
-        <sphereGeometry args={[hitRadius, 12, 8]} />
-        <meshBasicMaterial />
+        <sphereGeometry args={[hitRadius, 12, 12]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.BackSide} />
       </mesh>
       {children}
     </group>

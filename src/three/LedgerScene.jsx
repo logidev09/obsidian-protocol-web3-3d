@@ -1,80 +1,88 @@
 import { useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { PALETTE, getPerfProfile } from './geo'
 
 /**
- * SECTION 4 - grid ledger.
- * Bidang batang yang tingginya bereaksi terhadap posisi pointer, seperti
- * riak pada buku besar. Tidak ada drag di sini supaya scroll tetap ringan;
- * interaksinya murni hover.
+ * LEDGER - bidang blok tersettle.
+ * Grid balok yang terangkat mengikuti jarak ke pointer, seperti riak.
+ * Digambar dengan InstancedMesh: ratusan blok, satu draw call.
  */
+export default function LedgerScene() {
+  const mesh = useRef()
+  const { low, reducedMotion } = getPerfProfile()
+  const size = low ? 12 : 20
+  const gap = 0.42
 
-function Grid() {
-  const ref = useRef()
-  const { low, reducedMotion } = useMemo(getPerfProfile, [])
-  const size = low ? 14 : 22
-  const gap = 0.34
-  const count = size * size
-
-  const dummy = useMemo(() => new THREE.Object3D(), [])
-  const color = useMemo(() => new THREE.Color(), [])
-  const base = useMemo(() => new THREE.Color(PALETTE.slate), [])
-  const crest = useMemo(() => new THREE.Color(PALETTE.teal), [])
-  const pointer = useMemo(() => new THREE.Vector2(), [])
-
-  useFrame((frame, delta) => {
-    const m = ref.current
-    if (!m) return
-    const t = reducedMotion ? 0 : frame.clock.elapsedTime
-    const dt = Math.min(delta, 0.05)
-
-    pointer.x = THREE.MathUtils.damp(pointer.x, frame.pointer.x * (size * gap) * 0.5, 6, dt)
-    pointer.y = THREE.MathUtils.damp(pointer.y, frame.pointer.y * (size * gap) * 0.5, 6, dt)
-
-    let i = 0
+  const { positions, dummy, color } = useMemo(() => {
+    const pos = []
     const offset = ((size - 1) * gap) / 2
-
     for (let x = 0; x < size; x++) {
       for (let z = 0; z < size; z++) {
-        const px = x * gap - offset
-        const pz = z * gap - offset
-
-        const wave = Math.sin(px * 1.2 + t * 0.9) * Math.cos(pz * 1.2 - t * 0.7) * 0.16
-        const d = Math.hypot(px - pointer.x, pz + pointer.y)
-        const ripple = Math.max(0, 1 - d / 2.6) ** 2 * 0.75
-        const h = 0.06 + wave + ripple
-
-        dummy.position.set(px, h / 2, pz)
-        dummy.scale.set(1, Math.max(0.04, h) / 0.24, 1)
-        dummy.updateMatrix()
-        m.setMatrixAt(i, dummy.matrix)
-
-        color.copy(base).lerp(crest, THREE.MathUtils.clamp(ripple * 1.6, 0, 1))
-        m.setColorAt(i, color)
-        i++
+        pos.push(new THREE.Vector3(x * gap - offset, 0, z * gap - offset))
       }
     }
+    return { positions: pos, dummy: new THREE.Object3D(), color: new THREE.Color() }
+  }, [size])
 
-    m.instanceMatrix.needsUpdate = true
-    if (m.instanceColor) m.instanceColor.needsUpdate = true
+  const heights = useRef(new Float32Array(positions.length))
+  const { viewport } = useThree()
+
+  useFrame((state, delta) => {
+    const inst = mesh.current
+    if (!inst) return
+    const dt = Math.min(delta, 0.05)
+    const t = state.clock.elapsedTime
+
+    const px = state.pointer.x * (viewport.width / 2.6)
+    const pz = -state.pointer.y * (viewport.height / 2.2)
+
+    const cool = new THREE.Color(PALETTE.slate)
+    const warm = new THREE.Color(PALETTE.teal)
+    const hot = new THREE.Color(PALETTE.copper)
+
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i]
+      const dist = Math.hypot(p.x - px, p.z - pz)
+      const wave = reducedMotion ? 0 : Math.sin(t * 0.8 - dist * 1.6) * 0.06
+      const lift = Math.max(0, 1 - dist / 2.4)
+      const target = lift * lift * 0.9 + wave
+
+      heights.current[i] = THREE.MathUtils.damp(heights.current[i], target, 7, dt)
+      const h = Math.max(0.04, heights.current[i])
+
+      dummy.position.set(p.x, h / 2, p.z)
+      dummy.scale.set(1, h / 0.3, 1)
+      dummy.updateMatrix()
+      inst.setMatrixAt(i, dummy.matrix)
+
+      const intensity = THREE.MathUtils.clamp(heights.current[i] / 0.9, 0, 1)
+      color.copy(cool).lerp(warm, Math.min(1, intensity * 1.6))
+      if (intensity > 0.6) color.lerp(hot, (intensity - 0.6) / 0.4)
+      inst.setColorAt(i, color)
+    }
+
+    inst.instanceMatrix.needsUpdate = true
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true
   })
 
   return (
-    <instancedMesh ref={ref} args={[null, null, count]} rotation={[0.18, 0.6, 0]}>
-      <boxGeometry args={[0.16, 0.24, 0.16]} />
-      <meshStandardMaterial roughness={0.5} metalness={0.6} flatShading toneMapped={false} />
-    </instancedMesh>
-  )
-}
-
-export default function LedgerScene() {
-  return (
     <>
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[3, 6, 2]} intensity={1} color={PALETTE.mist} />
-      <pointLight position={[-3, 3, 3]} intensity={16} distance={14} color={PALETTE.copper} />
-      <Grid />
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[4, 8, 3]} intensity={1} color="#e2eaf2" />
+      <pointLight position={[-3, 4, -3]} intensity={0.5} color={PALETTE.indigo} />
+
+      <group rotation={[0.95, 0.6, 0]} position={[0, -0.6, 0]}>
+        <instancedMesh ref={mesh} args={[null, null, positions.length]}>
+          <boxGeometry args={[0.26, 0.3, 0.26]} />
+          <meshStandardMaterial roughness={0.45} metalness={0.55} flatShading />
+        </instancedMesh>
+
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]}>
+          <planeGeometry args={[size * gap + 1, size * gap + 1]} />
+          <meshBasicMaterial color={PALETTE.void} transparent opacity={0.55} />
+        </mesh>
+      </group>
     </>
   )
 }
