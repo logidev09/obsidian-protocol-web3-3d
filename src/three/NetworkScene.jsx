@@ -2,54 +2,69 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from './DragGroup'
-import { PALETTE, fibonacciSphere, nearestPairs, getPerfProfile } from './geo'
+import { PALETTE, fibonacciSphere, getPerfProfile, nearestPairs } from './geo'
 
 /**
- * JARINGAN - topologi validator.
- * Node tersebar di permukaan bola dan tersambung garis. Hover pada satu node
- * memicu pulse: node itu dan tetangga langsungnya membesar dan menyala.
+ * JARINGAN - node validator.
+ * Bola wireframe dari titik + rusuk. Node terdekat kursor menyala dan
+ * sedikit terangkat, seolah "terbangun" saat disentuh mouse.
  */
-function Node({ position, index, hovered, setHovered, neighbours }) {
-  const ref = useRef()
-  const isHot = hovered === index
-  const isNear = hovered !== null && neighbours.has(hovered)
+function Nodes({ points }) {
+  const mesh = useRef()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const colorA = useMemo(() => new THREE.Color(PALETTE.steel), [])
+  const colorB = useMemo(() => new THREE.Color(PALETTE.teal), [])
+  const tmp = useMemo(() => new THREE.Color(), [])
+  const world = useMemo(() => new THREE.Vector3(), [])
+  const ray = useMemo(() => new THREE.Vector3(), [])
 
-  useFrame((state, delta) => {
-    const m = ref.current
+  useFrame((frame, delta) => {
+    const m = mesh.current
     if (!m) return
     const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
-    const pulse = 1 + Math.sin(t * 1.2 + index * 0.7) * 0.06
-    const target = (isHot ? 2.1 : isNear ? 1.5 : 1) * pulse
-    m.scale.setScalar(THREE.MathUtils.damp(m.scale.x, target, 8, dt))
+    const t = frame.clock.elapsedTime
+
+    // arah kursor diproyeksikan ke ruang scene
+    ray.set(frame.pointer.x * 3.2, frame.pointer.y * 3.2, 2.4)
+
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i]
+      world.copy(p)
+      m.localToWorld(world)
+
+      const dist = world.distanceTo(ray)
+      const heat = THREE.MathUtils.clamp(1 - dist / 2.6, 0, 1)
+      const pulse = 1 + Math.sin(t * 2 + i * 0.35) * 0.12
+      const scale = (0.05 + heat * 0.08) * pulse
+
+      dummy.position.copy(p).multiplyScalar(1 + heat * 0.07)
+      dummy.scale.setScalar(THREE.MathUtils.damp(scale, scale, 8, dt))
+      dummy.updateMatrix()
+      m.setMatrixAt(i, dummy.matrix)
+
+      tmp.copy(colorA).lerp(colorB, heat)
+      m.setColorAt(i, tmp)
+    }
+
+    m.instanceMatrix.needsUpdate = true
+    if (m.instanceColor) m.instanceColor.needsUpdate = true
   })
 
-  const color = isHot ? PALETTE.copper : isNear ? PALETTE.teal : PALETTE.steel
-
   return (
-    <mesh
-      ref={ref}
-      position={position}
-      onPointerOver={(e) => {
-        e.stopPropagation()
-        setHovered(index)
-      }}
-      onPointerOut={() => setHovered((h) => (h === index ? null : h))}
-    >
-      <octahedronGeometry args={[0.085, 0]} />
+    <instancedMesh ref={mesh} args={[null, null, points.length]}>
+      <octahedronGeometry args={[1, 0]} />
       <meshStandardMaterial
-        color={color}
-        emissive={color}
-        emissiveIntensity={isHot ? 0.8 : isNear ? 0.4 : 0.12}
-        roughness={0.4}
+        roughness={0.3}
         metalness={0.6}
+        emissive={PALETTE.teal}
+        emissiveIntensity={0.35}
         flatShading
       />
-    </mesh>
+    </instancedMesh>
   )
 }
 
-function Links({ points, pairs }) {
+function Edges({ points, pairs }) {
   const geometry = useMemo(() => {
     const positions = new Float32Array(pairs.length * 6)
     pairs.forEach(([a, b], i) => {
@@ -63,49 +78,54 @@ function Links({ points, pairs }) {
 
   return (
     <lineSegments geometry={geometry}>
-      <lineBasicMaterial color={PALETTE.teal} transparent opacity={0.22} />
+      <lineBasicMaterial color={PALETTE.indigo} transparent opacity={0.3} />
     </lineSegments>
   )
 }
 
-export default function NetworkScene() {
-  const [hovered, setHovered] = useState(null)
-  const { low } = getPerfProfile()
-  const count = low ? 42 : 84
+function Pulse({ points, pairs }) {
+  const ref = useRef()
+  const route = useRef({ pair: pairs[0] || [0, 0], t: 0 })
 
-  const { points, pairs, neighbourMap } = useMemo(() => {
-    const pts = fibonacciSphere(count, 2.15)
-    const prs = nearestPairs(pts, 0.34)
-    const map = pts.map(() => new Set())
-    prs.forEach(([a, b]) => {
-      map[a].add(b)
-      map[b].add(a)
-    })
-    return { points: pts, pairs: prs, neighbourMap: map }
-  }, [count])
+  useFrame((_, delta) => {
+    const m = ref.current
+    if (!m || !pairs.length) return
+    const r = route.current
+    r.t += Math.min(delta, 0.05) * 0.9
+
+    if (r.t >= 1) {
+      r.t = 0
+      r.pair = pairs[Math.floor(Math.random() * pairs.length)]
+    }
+    m.position.lerpVectors(points[r.pair[0]], points[r.pair[1]], r.t)
+    m.scale.setScalar(0.07 * Math.sin(r.t * Math.PI))
+  })
+
+  return (
+    <mesh ref={ref}>
+      <sphereGeometry args={[1, 8, 8]} />
+      <meshBasicMaterial color={PALETTE.copper} />
+    </mesh>
+  )
+}
+
+export default function NetworkScene() {
+  const { low } = getPerfProfile()
+  const count = low ? 60 : 120
+
+  const points = useMemo(() => fibonacciSphere(count, 2.1), [count])
+  const pairs = useMemo(() => nearestPairs(points, low ? 0.14 : 0.11), [points, low])
 
   return (
     <>
-      <ambientLight intensity={0.45} />
-      <directionalLight position={[3, 5, 4]} intensity={0.9} color="#dde6ee" />
-      <pointLight position={[-4, -3, -2]} intensity={0.5} color={PALETTE.indigo} />
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[3, 5, 4]} intensity={0.9} color="#dde6f0" />
+      <pointLight position={[-4, -2, 2]} intensity={0.6} color={PALETTE.indigo} />
 
-      <DragGroup autoSpin={0.14} parallax={0.8} hitRadius={2.9}>
-        <Links points={points} pairs={pairs} />
-        {points.map((p, i) => (
-          <Node
-            key={i}
-            index={i}
-            position={p}
-            hovered={hovered}
-            setHovered={setHovered}
-            neighbours={neighbourMap[i]}
-          />
-        ))}
-        <mesh>
-          <sphereGeometry args={[2.02, 24, 16]} />
-          <meshBasicMaterial color={PALETTE.carbon} transparent opacity={0.25} />
-        </mesh>
+      <DragGroup autoSpin={0.12} parallax={0.8} hitRadius={3}>
+        <Nodes points={points} />
+        <Edges points={points} pairs={pairs} />
+        <Pulse points={points} pairs={pairs} />
       </DragGroup>
     </>
   )
