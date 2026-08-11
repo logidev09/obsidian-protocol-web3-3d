@@ -1,66 +1,88 @@
 /**
- * Wallet helpers — EIP-1193 (MetaMask/Rabby/Coinbase) & Solana (Phantom).
- * Tidak ada dependency eksternal: cukup window.ethereum / window.solana.
+ * Adapter dompet browser — tanpa dependency wallet SDK.
+ * Ethereum: EIP-1193 (MetaMask, Rabby, Brave, dsb) + personal_sign
+ * Solana: window.solana (Phantom) + signMessage
  */
 
-export const shorten = (a, n = 4) =>
-  a ? `${a.slice(0, 2 + n)}\u2026${a.slice(-n)}` : ''
-
-export function hasEthereum() {
-  return typeof window !== 'undefined' && Boolean(window.ethereum)
+export function detectWallets() {
+  const eth = typeof window !== 'undefined' && window.ethereum
+  const sol = typeof window !== 'undefined' && (window.solana || window.phantom?.solana)
+  return {
+    ethereum: Boolean(eth),
+    solana: Boolean(sol && sol.isPhantom !== false)
+  }
 }
 
-export function hasSolana() {
-  return typeof window !== 'undefined' && Boolean(window.solana?.isPhantom)
+export function shortAddress(a, head = 6, tail = 4) {
+  if (!a) return ''
+  return `${a.slice(0, head)}\u2026${a.slice(-tail)}`
+}
+
+function nonce() {
+  const b = new Uint8Array(16)
+  crypto.getRandomValues(b)
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+}
+
+/** Pesan gaya EIP-4361 (Sign-In with Ethereum). */
+export function buildSiweMessage({ address, chainId = 1, statement }) {
+  const domain = window.location.host
+  const uri = window.location.origin
+  return [
+    `${domain} wants you to sign in with your Ethereum account:`,
+    address,
+    '',
+    statement || 'Sign in to OBSIDIAN Protocol. This request will not trigger a transaction or cost gas.',
+    '',
+    `URI: ${uri}`,
+    'Version: 1',
+    `Chain ID: ${chainId}`,
+    `Nonce: ${nonce()}`,
+    `Issued At: ${new Date().toISOString()}`
+  ].join('\n')
 }
 
 export async function connectEthereum() {
-  if (!hasEthereum()) {
-    throw new Error('No EVM wallet detected. Install MetaMask or Rabby.')
-  }
-  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
+  const provider = window.ethereum
+  if (!provider) throw new Error('Dompet Ethereum tidak terdeteksi. Pasang MetaMask atau Rabby.')
+
+  const accounts = await provider.request({ method: 'eth_requestAccounts' })
   const address = accounts?.[0]
-  if (!address) throw new Error('Wallet returned no account.')
-  let chainId = null
-  try {
-    chainId = await window.ethereum.request({ method: 'eth_chainId' })
-  } catch {}
-  return { address, chain: 'ethereum', chainId }
-}
+  if (!address) throw new Error('Tidak ada akun yang dipilih.')
 
-export async function connectSolana() {
-  if (!hasSolana()) throw new Error('No Solana wallet detected. Install Phantom.')
-  const res = await window.solana.connect()
-  return { address: res.publicKey.toString(), chain: 'solana', chainId: 'mainnet-beta' }
-}
+  const chainIdHex = await provider.request({ method: 'eth_chainId' })
+  const chainId = parseInt(chainIdHex, 16)
 
-/** Minta signature untuk membuktikan kepemilikan address (SIWE-style message). */
-export async function signStatement(address, chain, statement) {
-  const nonce = crypto.getRandomValues(new Uint32Array(2)).join('')
-  const issuedAt = new Date().toISOString()
-  const domain = window.location.host
-  const message =
-    `${domain} wants you to sign in with your ${chain === 'solana' ? 'Solana' : 'Ethereum'} account:\n` +
-    `${address}\n\n${statement}\n\n` +
-    `URI: ${window.location.origin}\nVersion: 1\nNonce: ${nonce}\nIssued At: ${issuedAt}`
-
-  if (chain === 'solana') {
-    const encoded = new TextEncoder().encode(message)
-    const signed = await window.solana.signMessage(encoded, 'utf8')
-    const sig = btoa(String.fromCharCode(...new Uint8Array(signed.signature)))
-    return { message, signature: sig, nonce, issuedAt }
-  }
-
-  const signature = await window.ethereum.request({
+  const message = buildSiweMessage({ address, chainId })
+  const signature = await provider.request({
     method: 'personal_sign',
     params: [message, address]
   })
-  return { message, signature, nonce, issuedAt }
+
+  return { chain: 'ethereum', address, chainId, message, signature }
 }
 
-export function onAccountsChanged(cb) {
-  if (!hasEthereum() || !window.ethereum.on) return () => {}
-  const handler = (accounts) => cb(accounts?.[0] ?? null)
-  window.ethereum.on('accountsChanged', handler)
-  return () => window.ethereum.removeListener?.('accountsChanged', handler)
+export async function connectSolana() {
+  const provider = window.solana || window.phantom?.solana
+  if (!provider) throw new Error('Dompet Solana tidak terdeteksi. Pasang Phantom.')
+
+  const res = await provider.connect()
+  const address = res?.publicKey?.toString() || provider.publicKey?.toString()
+  if (!address) throw new Error('Tidak ada akun yang dipilih.')
+
+  const message = [
+    `${window.location.host} wants you to sign in with your Solana account:`,
+    address,
+    '',
+    'Sign in to OBSIDIAN Protocol. This request will not trigger a transaction.',
+    '',
+    `Nonce: ${nonce()}`,
+    `Issued At: ${new Date().toISOString()}`
+  ].join('\n')
+
+  const encoded = new TextEncoder().encode(message)
+  const signed = await provider.signMessage(encoded, 'utf8')
+  const signature = btoa(String.fromCharCode(...new Uint8Array(signed.signature)))
+
+  return { chain: 'solana', address, message, signature }
 }
