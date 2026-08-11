@@ -1,75 +1,79 @@
 import { useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { PALETTE } from '../geo'
+import { PALETTE, getPerfProfile } from '../geo'
+
+const perf = getPerfProfile()
 
 /**
- * Ledger grid: bidang batang vertikal yang bereaksi terhadap kursor.
- * Gelombang mengikuti posisi pointer — metafora likuiditas / throughput.
- * Tidak menangkap gestur scroll: hanya membaca posisi pointer global.
+ * Grid ledger — bidang balok yang naik-turun mengikuti gelombang,
+ * dan terangkat lebih tinggi di sekitar kursor. Tidak ada drag di sini:
+ * section ini panjang dan sering dilewati saat scroll, jadi pointer
+ * dibiarkan bebas.
  */
-
-const COLS = 26
-const ROWS = 14
-const GAP = 0.26
-const COUNT = COLS * ROWS
-
 export default function LedgerGrid() {
   const mesh = useRef()
-  const { pointer } = useThree()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const color = useMemo(() => new THREE.Color(), [])
+  const target = useRef(new THREE.Vector3(0, 0, 0))
+
+  const cols = perf.low ? 12 : 18
+  const rows = perf.low ? 8 : 12
+  const count = cols * rows
+  const gap = 0.42
 
   const cells = useMemo(() => {
-    const arr = []
-    for (let x = 0; x < COLS; x++) {
-      for (let z = 0; z < ROWS; z++) {
-        arr.push({
-          x: (x - COLS / 2 + 0.5) * GAP,
-          z: (z - ROWS / 2 + 0.5) * GAP,
-          seed: (x * 31 + z * 17) % 100 / 100
+    const list = []
+    for (let x = 0; x < cols; x++) {
+      for (let z = 0; z < rows; z++) {
+        list.push({
+          x: (x - (cols - 1) / 2) * gap,
+          z: (z - (rows - 1) / 2) * gap,
+          phase: (x + z) * 0.35
         })
       }
     }
-    return arr
-  }, [])
+    return list
+  }, [cols, rows])
 
-  const dummy = useMemo(() => new THREE.Object3D(), [])
-  const color = useMemo(() => new THREE.Color(), [])
-  const tealColor = useMemo(() => new THREE.Color(PALETTE.teal), [])
-  const amberColor = useMemo(() => new THREE.Color(PALETTE.amber), [])
-  const heights = useRef(new Float32Array(COUNT).fill(0.1))
+  const baseColor = useMemo(() => new THREE.Color(PALETTE.slate), [])
+  const hotColor = useMemo(() => new THREE.Color(PALETTE.teal), [])
 
-  useFrame((state, delta) => {
+  useFrame(({ clock, pointer, viewport }, delta) => {
     const m = mesh.current
     if (!m) return
+    const t = clock.elapsedTime
     const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
 
-    // pointer NDC → koordinat bidang (kasar tapi cukup, dan sangat murah)
-    const px = pointer.x * (COLS * GAP) * 0.55
-    const pz = -pointer.y * (ROWS * GAP) * 0.75
+    target.current.x = THREE.MathUtils.damp(
+      target.current.x,
+      (pointer.x * viewport.width) / 2,
+      6,
+      dt
+    )
+    target.current.z = THREE.MathUtils.damp(
+      target.current.z,
+      (-pointer.y * viewport.height) / 2,
+      6,
+      dt
+    )
 
-    for (let i = 0; i < COUNT; i++) {
-      const c = cells[i]
-      const dist = Math.hypot(c.x - px, c.z - pz)
-
-      const wave = Math.sin(t * 1.1 - dist * 2.4) * 0.09
-      const ripple = Math.max(0, 1 - dist / 1.5) ** 2 * 0.75
-      const base = 0.09 + c.seed * 0.14
-      const target = base + wave + ripple
-
-      heights.current[i] = THREE.MathUtils.damp(heights.current[i], Math.max(0.04, target), 9, dt)
-      const h = heights.current[i]
+    cells.forEach((c, i) => {
+      const wave = Math.sin(t * 0.9 + c.phase) * 0.16 + 0.2
+      const dx = c.x - target.current.x
+      const dz = c.z - target.current.z
+      const dist = Math.sqrt(dx * dx + dz * dz)
+      const influence = Math.max(0, 1 - dist / 1.9)
+      const h = wave + influence * influence * 0.95
 
       dummy.position.set(c.x, h / 2, c.z)
-      dummy.scale.set(1, h / 0.1, 1)
+      dummy.scale.set(0.26, Math.max(0.04, h), 0.26)
       dummy.updateMatrix()
       m.setMatrixAt(i, dummy.matrix)
 
-      const heat = THREE.MathUtils.clamp((h - 0.12) / 0.7, 0, 1)
-      color.set(PALETTE.slate).lerp(tealColor, heat)
-      if (heat > 0.7) color.lerp(amberColor, (heat - 0.7) / 0.3 * 0.5)
+      color.copy(baseColor).lerp(hotColor, Math.min(1, influence * 1.15))
       m.setColorAt(i, color)
-    }
+    })
 
     m.instanceMatrix.needsUpdate = true
     if (m.instanceColor) m.instanceColor.needsUpdate = true
@@ -77,19 +81,19 @@ export default function LedgerGrid() {
 
   return (
     <>
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[2, 6, 3]} intensity={0.9} color={PALETTE.mist} />
-      <pointLight position={[0, 2.5, 0]} intensity={6} color={PALETTE.teal} distance={8} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[3, 6, 2]} intensity={1} color={PALETTE.mist} />
+      <pointLight position={[0, 2.5, 2]} intensity={7} color={PALETTE.indigo} distance={14} />
 
-      <group rotation={[0.36, 0.5, 0]} position={[0, -0.5, 0]}>
-        <instancedMesh ref={mesh} args={[undefined, undefined, COUNT]}>
-          <boxGeometry args={[0.11, 0.1, 0.11]} />
-          <meshStandardMaterial roughness={0.45} metalness={0.75} flatShading />
+      <group rotation={[0.62, 0.5, 0]} position={[0, -0.6, 0]}>
+        <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
+          <boxGeometry args={[1, 1, 1]} />
+          <meshStandardMaterial metalness={0.75} roughness={0.35} flatShading toneMapped={false} />
         </instancedMesh>
 
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
-          <planeGeometry args={[COLS * GAP + 0.4, ROWS * GAP + 0.4]} />
-          <meshBasicMaterial color={PALETTE.ink} transparent opacity={0.65} />
+          <planeGeometry args={[cols * gap + 0.6, rows * gap + 0.6]} />
+          <meshBasicMaterial color={PALETTE.ink} transparent opacity={0.7} />
         </mesh>
       </group>
     </>

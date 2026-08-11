@@ -1,130 +1,124 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { getPerfProfile } from './geo'
+
+const perf = getPerfProfile()
 
 /**
- * Pembungkus interaksi mouse untuk objek 3D.
+ * Grup yang bisa diputar dengan drag mouse/touch, dengan inersia dan auto-spin.
  *
- * - Drag pointer  → memutar objek (dengan inersia saat dilepas).
- * - Pointer bebas → parallax halus mengikuti kursor.
- * - Auto-spin     → objek tetap hidup saat tidak disentuh.
- *
- * Penting untuk kenyamanan scroll: listener dipasang di elemen canvas
- * dengan `touch-action: pan-y`, sehingga pada layar sentuh gestur
- * scroll vertikal TIDAK direbut oleh rotasi objek.
+ * Kunci kenyamanan scroll: drag horizontal memutar objek, tetapi gerakan
+ * vertikal TIDAK pernah menahan halaman — pointer capture hanya aktif setelah
+ * gerakan horizontal melampaui ambang kecil, dan sumbu Y dibatasi ketat.
+ * Di layar sentuh, `touch-action: pan-y` pada canvas menjaga scroll tetap milik
+ * browser.
  */
 export default function DragGroup({
   children,
   autoSpin = 0.4,
-  parallax = 0.6,
+  parallax = 0.7,
+  maxTiltX = 0.5,
   scale = 1,
-  position = [0, 0, 0]
+  ...props
 }) {
   const group = useRef()
-  const { gl } = useThree()
-
   const state = useRef({
     dragging: false,
+    armed: false,
     lastX: 0,
     lastY: 0,
     velX: 0,
     velY: 0,
     rotX: 0,
-    rotY: 0,
-    pointerX: 0,
-    pointerY: 0,
-    idle: 0
+    rotY: 0
   })
+  const { size } = useThree()
 
-  const onDown = useCallback(
-    (e) => {
-      const s = state.current
-      s.dragging = true
-      s.lastX = e.clientX
-      s.lastY = e.clientY
-      s.idle = 0
-      gl.domElement.style.cursor = 'grabbing'
-    },
-    [gl]
-  )
-
-  const onUp = useCallback(() => {
-    state.current.dragging = false
-    gl.domElement.style.cursor = 'grab'
-  }, [gl])
-
-  const onMove = useCallback(
-    (e) => {
-      const s = state.current
-      const rect = gl.domElement.getBoundingClientRect()
-      s.pointerX = ((e.clientX - rect.left) / rect.width) * 2 - 1
-      s.pointerY = ((e.clientY - rect.top) / rect.height) * 2 - 1
-
-      if (!s.dragging) return
-      const dx = e.clientX - s.lastX
-      const dy = e.clientY - s.lastY
-      s.lastX = e.clientX
-      s.lastY = e.clientY
-      s.velY = dx * 0.005
-      s.velX = dy * 0.004
-      s.rotY += s.velY
-      s.rotX = THREE.MathUtils.clamp(s.rotX + s.velX, -0.85, 0.85)
-      s.idle = 0
-    },
-    [gl]
-  )
-
-  useEffect(() => {
-    const el = gl.domElement
-    el.style.cursor = 'grab'
-    el.style.touchAction = 'pan-y'
-
-    el.addEventListener('pointerdown', onDown)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-
-    return () => {
-      el.removeEventListener('pointerdown', onDown)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-    }
-  }, [gl, onDown, onMove, onUp])
-
-  useFrame((_, delta) => {
+  const onPointerDown = (e) => {
     const s = state.current
-    const g = group.current
-    if (!g) return
-    const dt = Math.min(delta, 0.05)
+    s.dragging = true
+    s.armed = false
+    s.lastX = e.clientX
+    s.lastY = e.clientY
+  }
 
-    if (!s.dragging) {
-      // inersia meluruh
-      s.velY *= 0.94
-      s.velX *= 0.94
-      s.rotY += s.velY
-      s.rotX = THREE.MathUtils.clamp(s.rotX + s.velX, -0.85, 0.85)
+  const endDrag = (e) => {
+    const s = state.current
+    if (s.armed && e?.target?.releasePointerCapture) {
+      try {
+        e.target.releasePointerCapture(e.pointerId)
+      } catch {
+        /* pointer sudah lepas */
+      }
+    }
+    s.dragging = false
+    s.armed = false
+  }
 
-      s.idle += dt
-      if (s.idle > 0.6) {
-        s.rotY += dt * autoSpin * 0.25
-        // kembali perlahan ke sumbu horizontal
-        s.rotX = THREE.MathUtils.damp(s.rotX, 0, 1.1, dt)
+  const onPointerMove = (e) => {
+    const s = state.current
+    if (!s.dragging) return
+    const dx = e.clientX - s.lastX
+    const dy = e.clientY - s.lastY
+
+    // Baru "kunci" pointer kalau niatnya jelas memutar (horizontal dominan).
+    if (!s.armed) {
+      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
+      if (Math.abs(dy) > Math.abs(dx) * 1.25) {
+        // Gerakan vertikal → biarkan halaman yang men-scroll.
+        s.dragging = false
+        return
+      }
+      s.armed = true
+      try {
+        e.target.setPointerCapture?.(e.pointerId)
+      } catch {
+        /* diabaikan */
       }
     }
 
-    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.rotY, 12, dt)
-    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, s.rotX, 12, dt)
+    s.velY += (dx / size.width) * 6
+    s.velX += (dy / size.height) * 2.2
+    s.lastX = e.clientX
+    s.lastY = e.clientY
+  }
 
-    // parallax posisi (tidak aktif saat drag agar tidak bertabrakan rasa)
-    const px = s.dragging ? 0 : s.pointerX * 0.18 * parallax
-    const py = s.dragging ? 0 : -s.pointerY * 0.12 * parallax
-    g.position.x = THREE.MathUtils.damp(g.position.x, position[0] + px, 4, dt)
-    g.position.y = THREE.MathUtils.damp(g.position.y, position[1] + py, 4, dt)
+  useFrame(({ pointer }, delta) => {
+    const g = group.current
+    if (!g) return
+    const s = state.current
+    const dt = Math.min(delta, 0.05)
+
+    if (!s.dragging) s.rotY += autoSpin * dt * (perf.reduced ? 0.3 : 1)
+
+    s.rotY += s.velY * dt * 3
+    s.rotX += s.velX * dt * 3
+    s.rotX = THREE.MathUtils.clamp(s.rotX, -maxTiltX, maxTiltX)
+
+    const damping = Math.pow(0.02, dt)
+    s.velY *= damping
+    s.velX *= damping
+
+    // Parallax halus mengikuti kursor, tanpa mengganggu rotasi drag.
+    const px = pointer.x * 0.18 * parallax
+    const py = -pointer.y * 0.12 * parallax
+
+    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.rotY + px, 8, dt)
+    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, s.rotX + py, 8, dt)
   })
 
   return (
-    <group ref={group} position={position} scale={scale}>
+    <group
+      ref={group}
+      scale={scale}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerLeave={endDrag}
+      onPointerCancel={endDrag}
+      {...props}
+    >
       {children}
     </group>
   )

@@ -1,68 +1,85 @@
 import * as THREE from 'three'
 
 /**
- * Palet: cyberpunk yang direm.
- * Basis abu-biru dingin, aksen teal desaturasi + amber tembaga.
- * Sengaja menghindari neon magenta/cyan penuh saturasi.
+ * Palet — cyberpunk yang sengaja diredam.
+ * Basis: batu tulis kebiruan yang sangat gelap.
+ * Aksen: teal desaturasi + indigo dingin + amber pucat sebagai nada hangat.
+ * Tidak ada magenta neon / hijau menyala — saturasi dijaga di bawah ~60%.
  */
 export const PALETTE = {
   void: '#06080b',
-  ink: '#0b0f14',
-  slate: '#1a2029',
-  steel: '#3b4654',
-  mist: '#c9d2dc',
-  teal: '#4a9a8f',
-  indigo: '#5a6b9c',
-  amber: '#c08a4e'
+  ink: '#0b1016',
+  slate: '#1b2530',
+  steel: '#38495a',
+  mist: '#c3cedb',
+  teal: '#4fb3a5',
+  indigo: '#5c6fd4',
+  amber: '#d6a06a'
 }
 
-/** PRNG deterministik supaya layout acak tetap konsisten tiap render. */
+/** PRNG deterministik supaya layout partikel identik di setiap render/SSR. */
 export function seededRandom(seed = 1) {
-  let s = seed >>> 0 || 1
+  let s = seed % 2147483647
+  if (s <= 0) s += 2147483646
   return () => {
-    s ^= s << 13
-    s ^= s >>> 17
-    s ^= s << 5
-    return ((s >>> 0) % 100000) / 100000
+    s = (s * 16807) % 2147483647
+    return (s - 1) / 2147483646
   }
 }
 
 /**
- * Box dengan sudut membulat, dibangun manual dari ExtrudeGeometry
- * supaya tidak perlu dependensi tambahan dan tetap low-poly.
+ * Profil performa sederhana. Perangkat lemah / prefers-reduced-motion
+ * mendapat dpr lebih rendah dan jumlah partikel lebih sedikit,
+ * sehingga scroll tetap mulus.
  */
-export function roundedBoxGeometry(width, height, depth, radius = 0.1, steps = 3) {
-  const r = Math.min(radius, width / 2 - 0.001, depth / 2 - 0.001)
-  const shape = new THREE.Shape()
-  const w = width / 2
-  const d = depth / 2
+export function getPerfProfile() {
+  if (typeof window === 'undefined') {
+    return { dpr: [1, 1.5], low: false, reduced: false, particles: 1 }
+  }
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const cores = navigator.hardwareConcurrency || 4
+  const mobile = window.innerWidth < 820
+  const low = reduced || cores <= 4 || mobile
+  return {
+    reduced,
+    low,
+    mobile,
+    dpr: low ? [1, 1.4] : [1, 2],
+    particles: low ? 0.55 : 1
+  }
+}
 
-  shape.moveTo(-w + r, -d)
-  shape.lineTo(w - r, -d)
-  shape.quadraticCurveTo(w, -d, w, -d + r)
-  shape.lineTo(w, d - r)
-  shape.quadraticCurveTo(w, d, w - r, d)
-  shape.lineTo(-w + r, d)
-  shape.quadraticCurveTo(-w, d, -w, d - r)
-  shape.lineTo(-w, -d + r)
-  shape.quadraticCurveTo(-w, -d, -w + r, -d)
+/** Kotak dengan sudut membulat, dibangun dari ExtrudeGeometry (tanpa dependensi tambahan). */
+export function roundedBoxGeometry(w, h, d, r = 0.08) {
+  const radius = Math.min(r, w / 2 - 0.001, d / 2 - 0.001)
+  const shape = new THREE.Shape()
+  const x = -w / 2
+  const z = -d / 2
+  shape.moveTo(x + radius, z)
+  shape.lineTo(x + w - radius, z)
+  shape.quadraticCurveTo(x + w, z, x + w, z + radius)
+  shape.lineTo(x + w, z + d - radius)
+  shape.quadraticCurveTo(x + w, z + d, x + w - radius, z + d)
+  shape.lineTo(x + radius, z + d)
+  shape.quadraticCurveTo(x, z + d, x, z + d - radius)
+  shape.lineTo(x, z + radius)
+  shape.quadraticCurveTo(x, z, x + radius, z)
 
   const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: height,
+    depth: h,
     bevelEnabled: true,
-    bevelThickness: height * 0.12,
-    bevelSize: r * 0.25,
-    bevelSegments: 1,
-    curveSegments: steps
+    bevelSize: 0.012,
+    bevelThickness: 0.012,
+    bevelSegments: 2,
+    curveSegments: 4
   })
-
   geo.rotateX(-Math.PI / 2)
-  geo.center()
+  geo.translate(0, h / 2, 0)
   geo.computeVertexNormals()
   return geo
 }
 
-/** Titik-titik pada bola dengan distribusi merata (fibonacci sphere). */
+/** Posisi titik pada bola (Fibonacci sphere) — dipakai node jaringan. */
 export function fibonacciSphere(count, radius = 1) {
   const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
@@ -71,22 +88,8 @@ export function fibonacciSphere(count, radius = 1) {
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
     points.push(
-      new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
+      new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
     )
   }
   return points
-}
-
-/** Deteksi perangkat lemah / preferensi reduce-motion untuk menurunkan beban render. */
-export function getPerfProfile() {
-  if (typeof window === 'undefined') return { dpr: [1, 1.5], low: false, reduced: false }
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const cores = navigator.hardwareConcurrency || 4
-  const mobile = window.matchMedia('(max-width: 820px)').matches
-  const low = reduced || cores <= 4 || mobile
-  return {
-    reduced,
-    low,
-    dpr: low ? [1, 1.4] : [1, 1.9]
-  }
 }
