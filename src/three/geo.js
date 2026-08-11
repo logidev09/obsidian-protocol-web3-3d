@@ -1,56 +1,63 @@
 import * as THREE from 'three'
 
 /**
- * Palet "muted cyberpunk".
- * Sengaja bukan neon jenuh. Basisnya abu kebiruan dingin, dengan tiga aksen
- * berintensitas rendah: teal desaturasi, indigo pudar, dan tembaga hangat.
+ * Palet. Sengaja dijaga low-saturation: dasar hitam kebiruan, aksen teal
+ * teredam dan tembaga hangat. Tidak ada neon magenta/hijau stabilo.
  */
 export const PALETTE = {
-  ink: '#06080b',
-  carbon: '#0d1117',
-  slate: '#1b2430',
-  steel: '#56718c',
-  mist: '#c8d3de',
-  teal: '#3ba88f',
-  indigo: '#5566a8',
-  copper: '#c08457'
+  void: '#06080b',
+  carbon: '#0c1015',
+  slate: '#1b232c',
+  steel: '#4a5c६b'.replace('६', '6'),
+  mist: '#c8d2dc',
+  teal: '#3e8f8c',
+  indigo: '#4a5a8c',
+  copper: '#a9714b'
 }
 
-/** Sebaran titik merata di permukaan bola (spiral Fibonacci). */
+/** Titik-titik terdistribusi merata di permukaan bola (spiral Fibonacci). */
 export function fibonacciSphere(count, radius = 1) {
   const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / Math.max(1, count - 1)) * 2
+    const y = 1 - (i / (count - 1)) * 2
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
-    points.push(
-      new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
-    )
+    points.push(new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius))
   }
   return points
 }
 
-/** Pasangan indeks titik yang jaraknya di bawah ambang - dipakai untuk rusuk lattice. */
+/** Pasangan titik yang berjarak lebih dekat dari `threshold` (relatif radius). */
 export function nearestPairs(points, threshold) {
+  const radius = points[0]?.length() || 1
+  const limit = threshold * radius
   const pairs = []
   for (let i = 0; i < points.length; i++) {
     for (let j = i + 1; j < points.length; j++) {
-      if (points[i].distanceTo(points[j]) < threshold) pairs.push([i, j])
+      if (points[i].distanceTo(points[j]) < limit) pairs.push([i, j])
     }
   }
   return pairs
 }
 
 /**
- * Profil performa sederhana. Menurunkan jumlah polygon di perangkat lemah
- * atau saat user meminta reduced motion, supaya scroll tetap mulus.
+ * Profil performa perangkat. Dipakai untuk menurunkan jumlah polygon di
+ * perangkat lemah dan mematikan animasi bila pengguna minta reduced motion.
  */
 export function getPerfProfile() {
-  if (typeof window === 'undefined') return { low: false, reducedMotion: false, dpr: [1, 1.6] }
+  if (typeof window === 'undefined') return { low: false, reducedMotion: false, dpr: [1, 2] }
+
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const cores = navigator.hardwareConcurrency || 4
   const coarse = window.matchMedia('(pointer: coarse)').matches
-  const low = reducedMotion || cores <= 4 || (coarse && window.innerWidth < 900)
-  return { low, reducedMotion, dpr: low ? [1, 1.25] : [1, 1.75] }
+  const narrow = window.innerWidth < 900
+  const low = cores <= 4 || (coarse && narrow)
+
+  return { low, reducedMotion, dpr: low ? [1, 1.5] : [1, 2] }
+}
+
+/** Interpolasi frame-rate independent. */
+export function damp(current, target, lambda, delta) {
+  return THREE.MathUtils.damp(current, target, lambda, Math.min(delta, 0.05))
 }
