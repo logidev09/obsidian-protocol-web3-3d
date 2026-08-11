@@ -1,137 +1,121 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import DragGroup from './DragGroup.jsx'
+import DragGroup from './DragGroup'
+import { seededNodes, nearestSegments, PALETTE } from './geo'
 
 /**
- * SCENE 2 — "Mesh Network"
- * Graf node vector: bola-bola low-poly yang terhubung garis.
- * Hover node -> node menyala & membesar. Drag -> memutar seluruh graf.
- * Node aktif disinkronkan dengan daftar fitur di sisi kiri.
+ * Mesh jaringan node: titik-titik validator yang saling terhubung.
+ * Node bereaksi terhadap posisi pointer — makin dekat, makin terang dan besar.
  */
+function Nodes({ points }) {
+  const inst = useRef()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const color = useMemo(() => new THREE.Color(), [])
+  const hit = useMemo(() => new THREE.Vector3(), [])
+  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), [])
+  const cold = useMemo(() => new THREE.Color(PALETTE.steel), [])
+  const warm = useMemo(() => new THREE.Color(PALETTE.teal), [])
 
-function useGraph(count, radius) {
-  return useMemo(() => {
-    const nodes = []
-    // distribusi fibonacci sphere -> persebaran rapi, tidak menggumpal
-    const golden = Math.PI * (3 - Math.sqrt(5))
-    for (let i = 0; i < count; i++) {
-      const y = 1 - (i / (count - 1)) * 2
-      const r = Math.sqrt(1 - y * y)
-      const theta = golden * i
-      nodes.push(
-        new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius)
-      )
+  useFrame(({ clock, raycaster, pointer, camera }) => {
+    const mesh = inst.current
+    if (!mesh) return
+
+    raycaster.setFromCamera(pointer, camera)
+    if (!raycaster.ray.intersectPlane(plane, hit)) hit.set(999, 999, 999)
+
+    const t = clock.getElapsedTime()
+
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i]
+      const wob = Math.sin(t * 0.8 + i * 0.7) * 0.03
+      dummy.position.set(p.x, p.y + wob, p.z)
+
+      const d = Math.hypot(p.x - hit.x, p.y - hit.y)
+      const near = Math.max(0, 1 - d / 1.25)
+      const s = 0.038 + near * 0.075
+
+      dummy.scale.setScalar(s)
+      dummy.rotation.set(t * 0.4 + i, t * 0.3, 0)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(i, dummy.matrix)
+
+      color.copy(cold).lerp(warm, near)
+      mesh.setColorAt(i, color)
     }
 
-    const edges = []
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        if (nodes[i].distanceTo(nodes[j]) < radius * 0.82) {
-          edges.push(nodes[i], nodes[j])
-        }
-      }
-    }
-
-    const geo = new THREE.BufferGeometry().setFromPoints(edges)
-    return { nodes, edgeGeometry: geo }
-  }, [count, radius])
-}
-
-function Node({ position, index, activeIndex, onHover }) {
-  const ref = useRef()
-  const [hovered, setHovered] = useState(false)
-  const isActive = hovered || activeIndex === index
-
-  useFrame((state, dt) => {
-    if (!ref.current) return
-    const target = isActive ? 1.9 : 1
-    const cur = ref.current.scale.x
-    ref.current.scale.setScalar(cur + (target - cur) * Math.min(dt * 8, 0.25))
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
   })
 
   return (
-    <mesh
-      ref={ref}
-      position={position}
-      onPointerOver={(e) => {
-        e.stopPropagation()
-        setHovered(true)
-        onHover(index)
-      }}
-      onPointerOut={() => {
-        setHovered(false)
-        onHover(null)
-      }}
-    >
-      <octahedronGeometry args={[0.062, 0]} />
-      <meshStandardMaterial
-        color={isActive ? '#aab6ff' : '#5b657f'}
-        emissive={isActive ? '#7c8cff' : '#242c3d'}
-        emissiveIntensity={isActive ? 1.5 : 0.5}
-        flatShading
-        roughness={0.4}
-        metalness={0.6}
-      />
-    </mesh>
+    <instancedMesh ref={inst} args={[null, null, points.length]}>
+      <octahedronGeometry args={[1, 0]} />
+      <meshStandardMaterial flatShading metalness={0.6} roughness={0.35} toneMapped={false} />
+    </instancedMesh>
   )
 }
 
-function Pulse({ nodes }) {
+function Links({ points }) {
+  const geo = useMemo(() => {
+    const segs = nearestSegments(points, 1.05, 3)
+    return new THREE.BufferGeometry().setFromPoints(segs)
+  }, [points])
+
+  const mat = useRef()
+  useFrame(({ clock }) => {
+    if (mat.current) {
+      mat.current.opacity = 0.16 + Math.sin(clock.getElapsedTime() * 1.1) * 0.05
+    }
+  })
+
+  return (
+    <lineSegments geometry={geo}>
+      <lineBasicMaterial ref={mat} color={PALETTE.indigo} transparent opacity={0.18} />
+    </lineSegments>
+  )
+}
+
+function Pulse({ points }) {
   const ref = useRef()
   const path = useMemo(() => {
-    const picks = [0, 7, 15, 24, 33, 41]
-    return picks.map((i) => nodes[i % nodes.length])
-  }, [nodes])
+    const picks = [4, 17, 29, 41, 8, 23]
+      .map((i) => points[i % points.length])
+      .filter(Boolean)
+    return new THREE.CatmullRomCurve3(picks, true)
+  }, [points])
 
-  useFrame((state) => {
+  useFrame(({ clock }) => {
     if (!ref.current) return
-    const t = (state.clock.elapsedTime * 0.22) % 1
-    const seg = t * (path.length - 1)
-    const i = Math.floor(seg)
-    const f = seg - i
-    const a = path[i]
-    const b = path[Math.min(i + 1, path.length - 1)]
-    ref.current.position.lerpVectors(a, b, f)
+    const t = (clock.getElapsedTime() * 0.09) % 1
+    ref.current.position.copy(path.getPointAt(t))
   })
 
   return (
     <mesh ref={ref}>
-      <sphereGeometry args={[0.05, 12, 12]} />
-      <meshBasicMaterial color="#3fbfae" />
+      <octahedronGeometry args={[0.075, 0]} />
+      <meshBasicMaterial color={PALETTE.sand} toneMapped={false} />
     </mesh>
   )
 }
 
-export default function NetworkMesh({ activeIndex = null, onNodeHover = () => {} }) {
-  const { nodes, edgeGeometry } = useGraph(46, 1.85)
+export default function NetworkMesh() {
+  const points = useMemo(() => seededNodes(58, 1.85, 11), [])
 
   return (
     <>
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[3, 4, 5]} intensity={1.1} color="#cfd6ff" />
-      <pointLight position={[-3, -2, 2]} intensity={6} color="#3fbfae" distance={10} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[3, 4, 5]} intensity={0.9} />
+      <pointLight position={[-3, 2, 4]} intensity={14} distance={12} color={PALETTE.indigo} />
 
-      <DragGroup autoSpin={0.1} sensitivity={0.0045}>
-        <lineSegments geometry={edgeGeometry}>
-          <lineBasicMaterial color="#5566aa" transparent opacity={0.28} />
-        </lineSegments>
-
-        {nodes.map((p, i) => (
-          <Node
-            key={i}
-            index={i}
-            position={p}
-            activeIndex={activeIndex}
-            onHover={onNodeHover}
-          />
-        ))}
-
-        <Pulse nodes={nodes} />
+      <DragGroup autoSpin={0.11} parallax={0.1} sensitivity={0.005}>
+        <Nodes points={points} />
+        <Links points={points} />
+        <Pulse points={points} />
 
         <mesh>
-          <sphereGeometry args={[1.84, 32, 32]} />
-          <meshBasicMaterial color="#0a0f1a" transparent opacity={0.5} side={THREE.BackSide} />
+          <icosahedronGeometry args={[2.35, 1]} />
+          <meshBasicMaterial color="#3a4356" wireframe transparent opacity={0.1} />
         </mesh>
       </DragGroup>
     </>
