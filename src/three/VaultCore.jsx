@@ -1,75 +1,141 @@
 import { useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { useDragRotate } from './useDragRotate'
+import DragGroup from './DragGroup'
+import { PALETTE, fibonacciSphere, mulberry32 } from './geo'
 
 /**
- * Hero object: "The Vault Core".
- * Icosahedron low-poly + wireframe shell + inner shard, semua procedural (tanpa asset).
- * Bisa di-drag untuk diputar, dan bereaksi halus pada posisi kursor.
+ * HERO — "Vault Core".
+ * Icosahedron low-poly berlapis: inti solid, cangkang wireframe yang bernapas,
+ * dan cincin shard yang mengorbit. Semua bisa diputar dengan drag.
  */
-export default function VaultCore({ accent = '#3fd8c2', edge = '#7c8cff' }) {
-  const group = useRef()
-  const shell = useRef()
-  const core = useRef()
-  const gl = useThree((s) => s.gl)
-  const { step } = useDragRotate(gl.domElement, { sensitivity: 0.005 })
+function Shards({ count = 22 }) {
+  const mesh = useRef()
+  const dummy = useMemo(() => new THREE.Object3D(), [])
 
-  const geo = useMemo(() => new THREE.IcosahedronGeometry(1.35, 1), [])
-  const shellGeo = useMemo(() => new THREE.IcosahedronGeometry(1.95, 1), [])
-  const edges = useMemo(() => new THREE.EdgesGeometry(shellGeo), [shellGeo])
+  const shards = useMemo(() => {
+    const rand = mulberry32(7)
+    return Array.from({ length: count }, () => {
+      const radius = 2.35 + rand() * 0.9
+      return {
+        radius,
+        speed: 0.12 + rand() * 0.22,
+        offset: rand() * Math.PI * 2,
+        tilt: (rand() - 0.5) * 0.9,
+        scale: 0.06 + rand() * 0.13,
+        spin: (rand() - 0.5) * 1.4
+      }
+    })
+  }, [count])
 
-  useFrame((state, dt) => {
-    const s = step()
-    const t = state.clock.elapsedTime
-    if (group.current) {
-      group.current.rotation.y = s.ry + t * 0.12
-      group.current.rotation.x = s.rx + Math.sin(t * 0.4) * 0.05
-      // parallax lembut mengikuti kursor
-      group.current.position.x = THREE.MathUtils.damp(group.current.position.x, s.pointer.x * 0.35, 3, dt)
-      group.current.position.y = THREE.MathUtils.damp(group.current.position.y, -s.pointer.y * 0.25, 3, dt)
-    }
-    if (shell.current) {
-      shell.current.rotation.y = -t * 0.18
-      shell.current.rotation.z = t * 0.06
-    }
-    if (core.current) {
-      const k = 1 + Math.sin(t * 1.6) * 0.02
-      core.current.scale.setScalar(k)
-    }
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime()
+    shards.forEach((s, i) => {
+      const a = s.offset + t * s.speed
+      dummy.position.set(
+        Math.cos(a) * s.radius,
+        Math.sin(a * 0.8 + s.tilt) * s.radius * 0.42,
+        Math.sin(a) * s.radius
+      )
+      dummy.rotation.set(t * s.spin, a, t * s.spin * 0.5)
+      dummy.scale.setScalar(s.scale)
+      dummy.updateMatrix()
+      mesh.current.setMatrixAt(i, dummy.matrix)
+    })
+    mesh.current.instanceMatrix.needsUpdate = true
   })
 
   return (
-    <group ref={group}>
-      <mesh ref={core} geometry={geo} castShadow>
+    <instancedMesh ref={mesh} args={[null, null, count]}>
+      <tetrahedronGeometry args={[1, 0]} />
+      <meshStandardMaterial
+        color={PALETTE.slate}
+        emissive={PALETTE.teal}
+        emissiveIntensity={0.25}
+        roughness={0.35}
+        metalness={0.7}
+        flatShading
+      />
+    </instancedMesh>
+  )
+}
+
+function Core() {
+  const inner = useRef()
+  const shell = useRef()
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime()
+    const pulse = 1 + Math.sin(t * 1.1) * 0.02
+    shell.current.scale.setScalar(pulse)
+    shell.current.rotation.y = -t * 0.08
+    inner.current.rotation.x = t * 0.05
+  })
+
+  return (
+    <group>
+      <mesh ref={inner}>
+        <icosahedronGeometry args={[1.28, 1]} />
         <meshStandardMaterial
-          color="#12161c"
-          roughness={0.28}
-          metalness={0.85}
-          flatShading
-          emissive={accent}
+          color="#131a24"
+          emissive={PALETTE.indigo}
           emissiveIntensity={0.14}
+          roughness={0.25}
+          metalness={0.9}
+          flatShading
         />
       </mesh>
 
-      <mesh geometry={geo} scale={1.008}>
-        <meshBasicMaterial color={accent} wireframe transparent opacity={0.16} />
+      <mesh ref={shell}>
+        <icosahedronGeometry args={[1.85, 1]} />
+        <meshBasicMaterial color={PALETTE.teal} wireframe transparent opacity={0.22} />
       </mesh>
 
-      <group ref={shell}>
-        <lineSegments geometry={edges}>
-          <lineBasicMaterial color={edge} transparent opacity={0.34} />
-        </lineSegments>
-      </group>
-
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[2.5, 0.008, 6, 96]} />
-        <meshBasicMaterial color={edge} transparent opacity={0.5} />
+      <mesh rotation={[Math.PI / 2.4, 0, 0]}>
+        <torusGeometry args={[2.55, 0.012, 3, 96]} />
+        <meshBasicMaterial color={PALETTE.violet} transparent opacity={0.35} />
       </mesh>
-      <mesh rotation={[Math.PI / 2.6, 0.5, 0]}>
-        <torusGeometry args={[2.85, 0.006, 6, 96]} />
-        <meshBasicMaterial color={accent} transparent opacity={0.35} />
+      <mesh rotation={[Math.PI / 1.7, 0.5, 0]}>
+        <torusGeometry args={[2.9, 0.01, 3, 96]} />
+        <meshBasicMaterial color={PALETTE.indigo} transparent opacity={0.22} />
       </mesh>
     </group>
+  )
+}
+
+function Nodes() {
+  const points = useMemo(() => fibonacciSphere(46, 2.05), [])
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(points.flatMap((p) => [p.x, p.y, p.z]), 3))
+    return g
+  }, [points])
+
+  const ref = useRef()
+  useFrame(({ clock }) => {
+    ref.current.rotation.y = clock.getElapsedTime() * 0.045
+  })
+
+  return (
+    <points ref={ref} geometry={geometry}>
+      <pointsMaterial size={0.035} color={PALETTE.sand} transparent opacity={0.65} sizeAttenuation />
+    </points>
+  )
+}
+
+export default function VaultCore() {
+  return (
+    <>
+      <ambientLight intensity={0.35} />
+      <directionalLight position={[4, 6, 5]} intensity={1.5} color="#cfd8e8" />
+      <directionalLight position={[-5, -2, -4]} intensity={0.6} color={PALETTE.indigo} />
+      <pointLight position={[0, 0, 0]} intensity={2.2} distance={6} color={PALETTE.teal} />
+
+      <DragGroup autoSpin={0.12} parallax={0.16}>
+        <Core />
+        <Nodes />
+        <Shards />
+      </DragGroup>
+    </>
   )
 }
