@@ -6,8 +6,7 @@ import { PALETTE, getPerfProfile, seededRandom } from './geo'
 
 /**
  * HERO — kristal polygon low-poly.
- * Drag untuk memutar, hover untuk menaikkan emisi, pecahan mengorbit
- * mengikuti jarak pointer.
+ * Drag untuk memutar, hover menaikkan emisi, pecahan mengorbit menjauh.
  */
 
 function Shard({ position, rotation, scale, speed, hovered }) {
@@ -56,11 +55,7 @@ function Crystal() {
       const radius = 2.5 + rand() * 1.1
       return {
         key: i,
-        position: [
-          Math.cos(angle) * radius,
-          (rand() - 0.5) * 2.6,
-          Math.sin(angle) * radius
-        ],
+        position: [Math.cos(angle) * radius, (rand() - 0.5) * 2.6, Math.sin(angle) * radius],
         rotation: [rand() * Math.PI, rand() * Math.PI, rand() * Math.PI],
         scale: 0.14 + rand() * 0.2,
         speed: 0.4 + rand() * 0.8
@@ -68,18 +63,20 @@ function Crystal() {
     })
   }, [])
 
-  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.55, 1)), [])
+  const edges = useMemo(
+    () => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.55, 1)),
+    []
+  )
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05)
     const t = state.clock.elapsedTime
     if (core.current) {
-      const target = hovered ? 1.08 : 1
-      const s = THREE.MathUtils.damp(core.current.scale.x, target, 6, dt)
+      const s = THREE.MathUtils.damp(core.current.scale.x, hovered ? 1.08 : 1, 6, dt)
       core.current.scale.setScalar(s)
       core.current.material.emissiveIntensity = THREE.MathUtils.damp(
         core.current.material.emissiveIntensity,
-        hovered ? 0.75 : 0.3,
+        hovered ? 0.72 : 0.3,
         5,
         dt
       )
@@ -111,13 +108,18 @@ function Crystal() {
         />
       </mesh>
 
-      <lineSegments ref={halo} geometry={edges} scale={1.34}>
+      <lineSegments geometry={edges} ref={halo} scale={1.34}>
         <lineBasicMaterial color={PALETTE.teal} transparent opacity={0.32} />
       </lineSegments>
 
       <mesh scale={1.9} rotation={[Math.PI / 2, 0, 0]}>
         <ringGeometry args={[1.5, 1.53, 64]} />
-        <meshBasicMaterial color={PALETTE.mist} transparent opacity={0.12} side={THREE.DoubleSide} />
+        <meshBasicMaterial
+          color={PALETTE.mist}
+          transparent
+          opacity={0.12}
+          side={THREE.DoubleSide}
+        />
       </mesh>
 
       {shards.map((s) => (
@@ -130,7 +132,6 @@ function Crystal() {
 export default function CrystalScene() {
   return (
     <>
-      <color attach="background" args={[0, 0, 0]} attachArray={undefined} visible={false} />
       <ambientLight intensity={0.45} />
       <directionalLight position={[4, 6, 5]} intensity={1.15} color={PALETTE.mist} />
       <pointLight position={[-5, -2, -4]} intensity={22} distance={18} color={PALETTE.indigo} />

@@ -1,50 +1,19 @@
 import * as THREE from 'three'
 
 /**
- * Palet — sengaja diredam.
- * Dasarnya abu-abu kebiruan dingin; aksen teal/indigo dipakai tipis,
- * amber hanya untuk sinyal kecil. Tidak ada neon jenuh (#00ffff, #ff00ff).
+ * Palet — cyberpunk yang ditahan.
+ * Basis grafit/ink, aksen teal & indigo yang diredam (bukan neon jenuh),
+ * satu aksen tembaga hangat sebagai pemecah. Tidak ada magenta/hijau stabilo.
  */
 export const PALETTE = {
-  void: '#06080b',
-  slate: '#161d25',
-  steel: '#2b3540',
-  mist: '#c3ccd6',
-  teal: '#4d9e93',
-  indigo: '#5a67a8',
-  amber: '#b8934a',
-  rose: '#a8616b'
-}
-
-/** PRNG deterministik — supaya komposisi acak selalu sama tiap reload. */
-export function seededRandom(seed = 1) {
-  let s = seed >>> 0 || 1
-  return () => {
-    s ^= s << 13
-    s ^= s >>> 17
-    s ^= s << 5
-    return ((s >>> 0) % 100000) / 100000
-  }
-}
-
-let cachedProfile = null
-
-/**
- * Profil performa kasar. Dipakai untuk menurunkan jumlah partikel & DPR
- * di perangkat lemah supaya scroll tetap halus.
- */
-export function getPerfProfile() {
-  if (cachedProfile) return cachedProfile
-  if (typeof window === 'undefined') {
-    cachedProfile = { low: false, dpr: [1, 1.6] }
-    return cachedProfile
-  }
-  const cores = navigator.hardwareConcurrency || 4
-  const mem = navigator.deviceMemory || 4
-  const mobile = window.matchMedia('(max-width: 820px)').matches
-  const low = cores <= 4 || mem <= 4 || mobile
-  cachedProfile = { low, mobile, dpr: low ? [1, 1.35] : [1, 1.75] }
-  return cachedProfile
+  ink: '#06080b',
+  carbon: '#0c1015',
+  slate: '#1b222c',
+  steel: '#3d4854',
+  mist: '#c8d2dc',
+  teal: '#3f9c92',
+  indigo: '#5b6ab0',
+  copper: '#b5804d'
 }
 
 export function prefersReducedMotion() {
@@ -52,56 +21,56 @@ export function prefersReducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-/** Rounded-rect 2D untuk di-extrude jadi bodi perangkat. */
-function roundedRectShape(width, height, radius) {
-  const w = width / 2
-  const h = height / 2
-  const r = Math.min(radius, w, h)
-  const shape = new THREE.Shape()
-  shape.moveTo(-w + r, -h)
-  shape.lineTo(w - r, -h)
-  shape.absarc(w - r, -h + r, r, -Math.PI / 2, 0, false)
-  shape.lineTo(w, h - r)
-  shape.absarc(w - r, h - r, r, 0, Math.PI / 2, false)
-  shape.lineTo(-w + r, h)
-  shape.absarc(-w + r, h - r, r, Math.PI / 2, Math.PI, false)
-  shape.lineTo(-w, -h + r)
-  shape.absarc(-w + r, -h + r, r, Math.PI, Math.PI * 1.5, false)
-  return shape
-}
-
 /**
- * Balok bersudut tumpul tanpa dependensi tambahan.
- * Dibangun dari extrude + bevel, lalu diputar supaya tebalnya di sumbu Y.
+ * Profil performa sederhana. Perangkat lemah dapat DPR & jumlah objek
+ * lebih kecil supaya scroll tetap 60fps.
  */
-export function roundedBoxGeometry(width, height, depth, radius = 0.15) {
-  const bevel = Math.min(height / 2.2, radius * 0.55)
-  const shape = roundedRectShape(width, depth, radius)
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: Math.max(height - bevel * 2, 0.01),
-    bevelEnabled: true,
-    bevelSize: bevel,
-    bevelThickness: bevel,
-    bevelSegments: 3,
-    curveSegments: 6
-  })
-  geo.center()
-  geo.rotateX(-Math.PI / 2)
-  geo.computeVertexNormals()
-  return geo
+export function getPerfProfile() {
+  if (typeof window === 'undefined') return { dpr: [1, 1.5], low: false }
+  const cores = navigator.hardwareConcurrency || 4
+  const coarse = window.matchMedia('(pointer: coarse)').matches
+  const narrow = window.innerWidth < 820
+  const low = cores <= 4 || (coarse && narrow)
+  return {
+    low,
+    dpr: low ? [1, 1.25] : [1, Math.min(window.devicePixelRatio || 1, 1.85)]
+  }
 }
 
-/** Distribusi titik merata di permukaan bola (spiral Fibonacci). */
+/** PRNG deterministik (mulberry32) supaya layout acak konsisten tiap render. */
+export function seededRandom(seed = 1) {
+  let a = seed >>> 0
+  return function next() {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** Sebaran titik merata di permukaan bola (spiral Fibonacci). */
 export function fibonacciSphere(count, radius = 1) {
   const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / Math.max(count - 1, 1)) * 2
-    const r = Math.sqrt(Math.max(1 - y * y, 0))
+    const y = 1 - (i / (count - 1)) * 2
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
     points.push(
       new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
     )
   }
   return points
+}
+
+/** Pasangan node terdekat, dipakai untuk menggambar rusuk jaringan. */
+export function nearestPairs(points, maxDistance) {
+  const pairs = []
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      if (points[i].distanceTo(points[j]) < maxDistance) pairs.push([i, j])
+    }
+  }
+  return pairs
 }
