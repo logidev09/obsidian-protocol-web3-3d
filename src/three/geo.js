@@ -1,22 +1,17 @@
 import * as THREE from 'three'
 
-/** Palet: gelap, sedikit desaturasi. Cyberpunk tanpa neon norak. */
+/** Palet — cyberpunk yang diredam: dasar biru-arang, aksen teal/indigo/pasir. */
 export const PALETTE = {
   ink: '#06080b',
-  slate: '#8f9bb0',
-  steel: '#5b6676',
-  teal: '#4fd1c5',
-  indigo: '#6d7cff',
-  violet: '#9a7bd6',
-  sand: '#d8b98a'
+  panel: '#0b1016',
+  slate: '#8fa3bd',
+  teal: '#3fd0c9',
+  indigo: '#6f7dff',
+  violet: '#a07cff',
+  sand: '#e2c290'
 }
 
-/** Interpolasi yang stabil terhadap frame rate. */
-export function damp(current, target, lambda, dt) {
-  return THREE.MathUtils.damp(current, target, lambda, dt)
-}
-
-/** PRNG deterministik supaya bentuk low-poly konsisten tiap reload. */
+/** PRNG deterministik supaya layout partikel stabil antar render. */
 export function mulberry32(seed) {
   let a = seed >>> 0
   return function () {
@@ -28,50 +23,64 @@ export function mulberry32(seed) {
   }
 }
 
-/** Box dengan sudut membulat, dibangun dari extrude shape (tanpa asset eksternal). */
-export function roundedBoxGeometry(width, height, depth, radius) {
-  const r = Math.min(radius, width / 2, height / 2)
-  const w = width / 2 - r
-  const h = height / 2 - r
-  const shape = new THREE.Shape()
-
-  shape.moveTo(-w - r, -h)
-  shape.lineTo(-w - r, h)
-  shape.quadraticCurveTo(-w - r, h + r, -w, h + r)
-  shape.lineTo(w, h + r)
-  shape.quadraticCurveTo(w + r, h + r, w + r, h)
-  shape.lineTo(w + r, -h)
-  shape.quadraticCurveTo(w + r, -h - r, w, -h - r)
-  shape.lineTo(-w, -h - r)
-  shape.quadraticCurveTo(-w - r, -h - r, -w - r, -h)
-
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: depth * 0.14,
-    bevelSize: depth * 0.12,
-    bevelSegments: 2,
-    curveSegments: 6
-  })
-
-  geo.center()
-  geo.computeVertexNormals()
-  return geo
-}
-
-/** Titik-titik pada bola (fibonacci sphere) untuk node jaringan. */
-export function fibonacciSphere(count, radius) {
+/** Sebaran titik merata di permukaan bola (spiral Fibonacci). */
+export function fibonacciSphere(count, radius = 1) {
   const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
-
   for (let i = 0; i < count; i++) {
     const y = 1 - (i / (count - 1)) * 2
-    const r = Math.sqrt(1 - y * y)
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
     points.push(
       new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
     )
   }
-
   return points
+}
+
+/** Interpolasi frame-rate independent. */
+export function damp(current, target, lambda, dt) {
+  return THREE.MathUtils.damp(current, target, lambda, dt)
+}
+
+export const clamp = THREE.MathUtils.clamp
+
+/**
+ * Rounded box low-poly tanpa dependensi tambahan:
+ * extrude profil persegi bersudut membulat.
+ */
+export function roundedBoxGeometry(width, height, depth, radius = 0.2) {
+  const w = width / 2 - radius
+  const h = height / 2 - radius
+  const shape = new THREE.Shape()
+  shape.moveTo(-w, -h - radius)
+  shape.lineTo(w, -h - radius)
+  shape.quadraticCurveTo(w + radius, -h - radius, w + radius, -h)
+  shape.lineTo(w + radius, h)
+  shape.quadraticCurveTo(w + radius, h + radius, w, h + radius)
+  shape.lineTo(-w, h + radius)
+  shape.quadraticCurveTo(-w - radius, h + radius, -w - radius, h)
+  shape.lineTo(-w - radius, -h)
+  shape.quadraticCurveTo(-w - radius, -h - radius, -w, -h - radius)
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: depth * 0.18,
+    bevelSize: depth * 0.16,
+    bevelSegments: 1,
+    curveSegments: 3
+  })
+  geo.center()
+  geo.computeVertexNormals()
+  return geo
+}
+
+/** Deteksi perangkat lemah / hemat gerak — dipakai untuk menurunkan beban render. */
+export function isLowPower() {
+  if (typeof window === 'undefined') return false
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const smallCores = (navigator.hardwareConcurrency || 8) <= 4
+  const narrow = window.innerWidth < 640
+  return reduced || (smallCores && narrow)
 }
