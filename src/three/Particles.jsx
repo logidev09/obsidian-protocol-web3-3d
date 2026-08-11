@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
-/** Debu partikel halus — memberi kedalaman tanpa membebani GPU. */
+/** Debu partikel halus - memberi kedalaman tanpa membebani GPU. */
 export default function Particles({ count = 260, radius = 9, color = '#7c8cff', size = 0.028 }) {
   const ref = useRef()
 
@@ -31,7 +31,7 @@ export default function Particles({ count = 260, radius = 9, color = '#7c8cff', 
           count={count}
           array={positions}
           itemSize={3}
-ある        />
+        />
       </bufferGeometry>
       <pointsMaterial
         size={size}
