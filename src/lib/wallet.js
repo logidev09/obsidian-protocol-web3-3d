@@ -1,62 +1,69 @@
 /**
- * Deteksi + koneksi wallet browser tanpa dependency eksternal.
- * EVM  : EIP-1193 (MetaMask, Rabby, Coinbase, Brave...)
- * SOL  : Phantom / Backpack (window.solana)
+ * Wallet helpers — EIP-1193 (MetaMask/Rabby/Coinbase) dan Phantom (Solana).
+ * Tidak ada dependency wallet-kit, jadi bundle tetap ringan.
  */
 
-export function hasEvm() {
-  return typeof window !== 'undefined' && Boolean(window.ethereum)
-}
-
-export function hasSolana() {
-  return typeof window !== 'undefined' && Boolean(window.solana && window.solana.isPhantom !== undefined)
-}
-
-export function shortAddress(a) {
+export function shortAddr(a = '', head = 6, tail = 4) {
   if (!a) return ''
-  return a.length > 12 ? `${a.slice(0, 6)}...${a.slice(-4)}` : a
+  return a.length <= head + tail + 2 ? a : `${a.slice(0, head)}\u2026${a.slice(-tail)}`
+}
+
+export function detectWallets() {
+  if (typeof window === 'undefined') return { evm: false, solana: false }
+  return {
+    evm: Boolean(window.ethereum),
+    solana: Boolean(window.solana && window.solana.isPhantom)
+  }
 }
 
 export async function connectEvm() {
-  if (!hasEvm()) throw new Error('NO_EVM_WALLET')
-  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
+  const provider = typeof window !== 'undefined' ? window.ethereum : null
+  if (!provider) {
+    const err = new Error('Tidak ada wallet EVM terdeteksi. Pasang MetaMask atau Rabby lalu muat ulang halaman.')
+    err.code = 'NO_PROVIDER'
+    throw err
+  }
+  const accounts = await provider.request({ method: 'eth_requestAccounts' })
   const address = accounts && accounts[0]
-  if (!address) throw new Error('NO_ACCOUNT')
-  return address
+  if (!address) throw new Error('Wallet tidak mengembalikan alamat apa pun.')
+
+  let chainId = null
+  try {
+    chainId = await provider.request({ method: 'eth_chainId' })
+  } catch {
+    /* opsional */
+  }
+
+  return { address, chain: 'ethereum', chainId, provider }
+}
+
+export async function signEvmMessage(provider, address, message) {
+  return provider.request({ method: 'personal_sign', params: [message, address] })
 }
 
 export async function connectSolana() {
-  if (!hasSolana()) throw new Error('NO_SOLANA_WALLET')
-  const res = await window.solana.connect()
-  return res.publicKey.toString()
+  const provider = typeof window !== 'undefined' ? window.solana : null
+  if (!provider || !provider.isPhantom) {
+    const err = new Error('Phantom tidak terdeteksi. Pasang ekstensi Phantom lalu muat ulang halaman.')
+    err.code = 'NO_PROVIDER'
+    throw err
+  }
+  const res = await provider.connect()
+  return { address: res.publicKey.toString(), chain: 'solana', provider }
 }
 
-/** Pesan EIP-4361 (Sign-In with Ethereum) yang valid. */
-export function buildSiweMessage(address, nonce) {
-  const { host, origin } = window.location
+/** Pesan SIWE-style yang ditandatangani user. */
+export function buildStatement(address, chain) {
+  const nonce = Math.random().toString(36).slice(2, 12)
+  const host = typeof window !== 'undefined' ? window.location.host : 'obsidian.protocol'
   return [
-    `${host} wants you to sign in with your Ethereum account:`,
-    address,
+    `${host} meminta kamu menandatangani pesan untuk masuk.`,
     '',
-    'Authenticate with OBSIDIAN Protocol. This request will not trigger a blockchain transaction or cost any gas.',
-    '',
-    `URI: ${origin}`,
-    'Version: 1',
-    'Chain ID: 1',
+    `Address: ${address}`,
+    `Chain: ${chain}`,
     `Nonce: ${nonce}`,
-    `Issued At: ${new Date().toISOString()}`
+    `Issued At: ${new Date().toISOString()}`,
+    '',
+    'Tanda tangan ini gratis dan tidak memindahkan aset apa pun.'
   ].join('\n')
-}
-
-export function makeNonce() {
-  const bytes = new Uint8Array(16)
-  crypto.getRandomValues(bytes)
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-export async function signEvmMessage(address, message) {
-  return window.ethereum.request({
-    method: 'personal_sign',
-    params: [message, address]
-  })
 }

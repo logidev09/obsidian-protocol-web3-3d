@@ -1,93 +1,113 @@
 import { useEffect, useRef, useState } from 'react'
-import Lenis from 'lenis'
 
-/** Smooth scroll global — lembut tapi tidak "berat", dan mati otomatis di touch device. */
+/** Smooth scroll — inertia lembut, tidak melawan trackpad. */
 export function useSmoothScroll() {
   useEffect(() => {
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduced) return
+    if (typeof window === 'undefined') return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
-    const lenis = new Lenis({
-      duration: 1.05,
-      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-      smoothWheel: true,
-      syncTouch: false,
-      touchMultiplier: 1.6,
-      wheelMultiplier: 0.95
+    let lenis
+    let raf
+    let cancelled = false
+
+    import('lenis').then(({ default: Lenis }) => {
+      if (cancelled) return
+      lenis = new Lenis({
+        duration: 1.05,
+        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+        smoothWheel: true,
+        wheelMultiplier: 0.9,
+        touchMultiplier: 1.6,
+        syncTouch: false
+      })
+      const loop = (time) => {
+        lenis.raf(time)
+        raf = requestAnimationFrame(loop)
+      }
+      raf = requestAnimationFrame(loop)
     })
 
-    let id
-    const raf = (time) => {
-      lenis.raf(time)
-      id = requestAnimationFrame(raf)
-    }
-    id = requestAnimationFrame(raf)
-
-    const onAnchor = (e) => {
-      const a = e.target.closest('a[href^="#"]')
-      if (!a) return
-      const el = document.querySelector(a.getAttribute('href'))
-      if (!el) return
-      e.preventDefault()
-      lenis.scrollTo(el, { offset: -70, duration: 1.3 })
-    }
-    document.addEventListener('click', onAnchor)
-
     return () => {
-      document.removeEventListener('click', onAnchor)
-      cancelAnimationFrame(id)
-      lenis.destroy()
+      cancelled = true
+      if (raf) cancelAnimationFrame(raf)
+      if (lenis) lenis.destroy()
     }
   }, [])
 }
 
-/** Reveal element saat masuk viewport. */
-export function useReveal(options = {}) {
-  const ref = useRef(null)
-  useEffect(() => {
-    const root = ref.current
-    if (!root) return
-    const items = root.querySelectorAll('.reveal')
-    if (!items.length) return
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) {
-            e.target.classList.add('in')
-            io.unobserve(e.target)
-          }
-        })
-      },
-      { threshold: 0.16, rootMargin: '0px 0px -8% 0px', ...options }
-    )
-    items.forEach((i) => io.observe(i))
-    return () => io.disconnect()
-  }, [])
-  return ref
-}
-
-/** Progress scroll halaman 0..1 */
+/** Progres scroll 0..1 untuk bar di atas. */
 export function useScrollProgress() {
   const [p, setP] = useState(0)
   useEffect(() => {
+    let ticking = false
     const onScroll = () => {
-      const h = document.documentElement.scrollHeight - window.innerHeight
-      setP(h > 0 ? Math.min(1, window.scrollY / h) : 0)
+      if (ticking) return
+      ticking = true
+      requestAnimationFrame(() => {
+        const max = document.documentElement.scrollHeight - window.innerHeight
+        setP(max > 0 ? Math.min(1, window.scrollY / max) : 0)
+        ticking = false
+      })
     }
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+    }
   }, [])
   return p
 }
 
-/** Deteksi device lemah → turunkan kualitas 3D. */
-export function useIsLowPower() {
-  const [low, setLow] = useState(false)
+/** true setelah halaman di-scroll melewati threshold. */
+export function useScrolled(threshold = 24) {
+  const [on, setOn] = useState(false)
   useEffect(() => {
-    const cores = navigator.hardwareConcurrency ?? 4
-    const mobile = window.matchMedia('(max-width: 820px)').matches
-    setLow(cores <= 4 || mobile)
-  }, [])
-  return low
+    const onScroll = () => setOn(window.scrollY > threshold)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [threshold])
+  return on
+}
+
+/** Reveal saat elemen masuk viewport. */
+export function useReveal(options = {}) {
+  const ref = useRef(null)
+  const [seen, setSeen] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || seen) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setSeen(true)
+          io.disconnect()
+        }
+      },
+      { threshold: 0.16, rootMargin: '0px 0px -8% 0px', ...options }
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [seen, options])
+
+  return [ref, seen]
+}
+
+/** Hanya render canvas saat section-nya dekat viewport — hemat GPU, scroll tetap enteng. */
+export function useInViewport(margin = '260px') {
+  const ref = useRef(null)
+  const [inView, setInView] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const io = new IntersectionObserver(([e]) => setInView(e.isIntersecting), { rootMargin: margin })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [margin])
+
+  return [ref, inView]
 }
