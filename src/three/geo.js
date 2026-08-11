@@ -1,30 +1,19 @@
 import * as THREE from 'three'
 
 /**
- * Palet "muted cyberpunk": gelap, dingin, kontras rendah.
- * Aksen sengaja de-saturated (teal keabuan + copper) supaya tidak norak
- * seperti neon magenta/cyan yang biasa dipakai template crypto.
+ * Palet "muted cyberpunk".
+ * Sengaja bukan neon jenuh. Basisnya abu kebiruan dingin, dengan tiga aksen
+ * berintensitas rendah: teal desaturasi, indigo pudar, dan tembaga hangat.
  */
 export const PALETTE = {
-  void: '#06080b',
-  ink: '#0b0f14',
-  carbon: '#111823',
+  ink: '#06080b',
+  carbon: '#0d1117',
   slate: '#1b2430',
-  steel: '#46586b',
-  mist: '#c9d4de',
-  teal: '#3aa294',
-  indigo: '#4b5d94',
-  copper: '#b8794b'
-}
-
-/** Deteksi perangkat lemah -> semua scene menurunkan jumlah polygon. */
-export function getPerfProfile() {
-  if (typeof window === 'undefined') return { low: false, dpr: [1, 1.5] }
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-  const cores = navigator.hardwareConcurrency ?? 8
-  const narrow = window.innerWidth < 820
-  const low = narrow || cores <= 4
-  return { low, reduced, dpr: low ? [1, 1.4] : [1, 1.8] }
+  steel: '#56718c',
+  mist: '#c8d3de',
+  teal: '#3ba88f',
+  indigo: '#5566a8',
+  copper: '#c08457'
 }
 
 /** Sebaran titik merata di permukaan bola (spiral Fibonacci). */
@@ -32,15 +21,17 @@ export function fibonacciSphere(count, radius = 1) {
   const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / (count - 1)) * 2
+    const y = 1 - (i / Math.max(1, count - 1)) * 2
     const r = Math.sqrt(Math.max(0, 1 - y * y))
     const theta = golden * i
-    points.push(new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(radius))
+    points.push(
+      new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
+    )
   }
   return points
 }
 
-/** Pasangan titik yang berjarak < threshold -> dipakai jadi rusuk lattice. */
+/** Pasangan indeks titik yang jaraknya di bawah ambang - dipakai untuk rusuk lattice. */
 export function nearestPairs(points, threshold) {
   const pairs = []
   for (let i = 0; i < points.length; i++) {
@@ -51,9 +42,15 @@ export function nearestPairs(points, threshold) {
   return pairs
 }
 
-/** Titik acak di dalam kubus, dipakai untuk partikel debu. */
-export function randomInBox(count, spread) {
-  const arr = new Float32Array(count * 3)
-  for (let i = 0; i < count * 3; i++) arr[i] = (Math.random() - 0.5) * spread
-  return arr
+/**
+ * Profil performa sederhana. Menurunkan jumlah polygon di perangkat lemah
+ * atau saat user meminta reduced motion, supaya scroll tetap mulus.
+ */
+export function getPerfProfile() {
+  if (typeof window === 'undefined') return { low: false, reducedMotion: false, dpr: [1, 1.6] }
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const cores = navigator.hardwareConcurrency || 4
+  const coarse = window.matchMedia('(pointer: coarse)').matches
+  const low = reducedMotion || cores <= 4 || (coarse && window.innerWidth < 900)
+  return { low, reducedMotion, dpr: low ? [1, 1.25] : [1, 1.75] }
 }

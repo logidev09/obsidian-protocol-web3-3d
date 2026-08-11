@@ -1,92 +1,77 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { getPerfProfile } from './geo'
 
 /**
- * Pembungkus objek 3D yang bisa diputar dengan drag mouse / sentuh.
+ * Wadah objek yang bisa diputar dengan drag mouse, plus parallax halus
+ * mengikuti pointer, dan inersia saat dilepas.
  *
- * Aturan kenyamanan scroll:
- * - drag hanya aktif setelah pointer turun DI ATAS objek (bukan di area kosong)
- * - di layar sentuh, hanya gerakan horizontal yang menahan gestur;
- *   gerakan vertikal dilepas supaya halaman tetap bisa di-scroll
- * - saat dilepas, rotasi meluncur (inertia) lalu kembali berputar pelan
+ * Kenyamanan scroll:
+ * - Pointer bertipe "touch" sengaja diabaikan. Di ponsel jari dipakai untuk
+ *   menggulir halaman, jadi kanvas tidak pernah merebut gesture scroll.
+ * - Tidak ada listener wheel sama sekali; scroll roda mouse selalu diteruskan.
  */
 export default function DragGroup({
   children,
   autoSpin = 0.2,
-  parallax = 0.5,
+  parallax = 1,
   maxPitch = 0.5,
-  ...props
+  hitRadius = 3.2
 }) {
   const group = useRef()
+  const gl = useThree((s) => s.gl)
+
   const state = useRef({
     dragging: false,
-    axisLocked: null,
     lastX: 0,
     lastY: 0,
-    startX: 0,
-    startY: 0,
-    velX: 0,
-    velY: 0,
-    pitch: 0
+    yaw: 0,
+    pitch: 0,
+    velYaw: 0,
+    velPitch: 0
   })
-  const { gl } = useThree()
-  const reduced = useRef(getPerfProfile().reduced)
 
-  useEffect(() => {
-    const s = state.current
+  const { reducedMotion } = getPerfProfile()
+  const spin = reducedMotion ? 0 : autoSpin
 
-    const onMove = (e) => {
-      if (!s.dragging) return
-      const x = e.clientX
-      const y = e.clientY
+  const setCursor = (v) => {
+    gl.domElement.style.cursor = v
+  }
 
-      if (s.axisLocked === null) {
-        const dx = Math.abs(x - s.startX)
-        const dy = Math.abs(y - s.startY)
-        if (dx + dy > 6) s.axisLocked = dx > dy ? 'x' : 'y'
-      }
-
-      // Gestur vertikal di layar sentuh = niat scroll, bukan memutar.
-      if (e.pointerType === 'touch' && s.axisLocked === 'y') {
-        s.dragging = false
-        gl.domElement.style.cursor = 'grab'
-        return
-      }
-
-      if (e.pointerType === 'touch') e.preventDefault?.()
-
-      s.velX = (x - s.lastX) * 0.005
-      s.velY = (y - s.lastY) * 0.004
-      s.lastX = x
-      s.lastY = y
-    }
-
-    const onUp = () => {
-      if (!s.dragging) return
-      s.dragging = false
-      s.axisLocked = null
-      gl.domElement.style.cursor = 'grab'
-    }
-
-    window.addEventListener('pointermove', onMove, { passive: false })
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-    }
-  }, [gl])
-
-  const begin = (e) => {
+  const onDown = (e) => {
+    if (e.pointerType === 'touch') return
+    e.stopPropagation()
+    e.target.setPointerCapture?.(e.pointerId)
     const s = state.current
     s.dragging = true
-    s.axisLocked = null
-    s.lastX = s.startX = e.clientX
-    s.lastY = s.startY = e.clientY
-    gl.domElement.style.cursor = 'grabbing'
+    s.lastX = e.clientX
+    s.lastY = e.clientY
+    s.velYaw = 0
+    s.velPitch = 0
+    setCursor('grabbing')
+  }
+
+  const onMove = (e) => {
+    const s = state.current
+    if (!s.dragging) return
+    e.stopPropagation()
+    const dx = (e.clientX - s.lastX) / 220
+    const dy = (e.clientY - s.lastY) / 220
+    s.lastX = e.clientX
+    s.lastY = e.clientY
+    s.yaw += dx
+    s.pitch = THREE.MathUtils.clamp(s.pitch + dy, -maxPitch, maxPitch)
+    s.velYaw = dx
+    s.velPitch = dy
+  }
+
+  const onUp = (e) => {
+    const s = state.current
+    if (!s.dragging) return
+    s.dragging = false
+    e.target.releasePointerCapture?.(e.pointerId)
+    setCursor('grab')
   }
 
   useFrame((frame, delta) => {
@@ -95,39 +80,36 @@ export default function DragGroup({
     const s = state.current
     const dt = Math.min(delta, 0.05)
 
-    if (s.dragging) {
-      g.rotation.y += s.velX
-      s.pitch = THREE.MathUtils.clamp(s.pitch + s.velY, -maxPitch, maxPitch)
-      s.velX *= 0.72
-      s.velY *= 0.72
-    } else {
-      g.rotation.y += s.velX + (reduced.current ? 0 : autoSpin * dt)
-      s.velX *= 0.94
-      s.velY *= 0.94
-      s.pitch = THREE.MathUtils.damp(s.pitch, 0, 1.4, dt)
+    if (!s.dragging) {
+      s.yaw += s.velYaw
+      s.pitch = THREE.MathUtils.clamp(s.pitch + s.velPitch, -maxPitch, maxPitch)
+      s.velYaw *= 0.92
+      s.velPitch *= 0.92
+      s.yaw += spin * dt
+      s.pitch = THREE.MathUtils.damp(s.pitch, 0, 1.2, dt)
     }
 
-    // Parallax halus mengikuti pointer, ditumpuk di atas pitch dari drag.
-    const target = s.pitch + frame.pointer.y * 0.12 * parallax
-    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, target, 6, dt)
-    g.position.x = THREE.MathUtils.damp(g.position.x, frame.pointer.x * 0.22 * parallax, 4, dt)
+    const px = frame.pointer.x * 0.16 * parallax
+    const py = frame.pointer.y * 0.12 * parallax
+
+    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, s.yaw + px, 9, dt)
+    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, s.pitch - py, 9, dt)
   })
 
   return (
-    <group
-      ref={group}
-      onPointerDown={(e) => {
-        e.stopPropagation()
-        begin(e)
-      }}
-      onPointerOver={() => {
-        gl.domElement.style.cursor = 'grab'
-      }}
-      onPointerOut={() => {
-        if (!state.current.dragging) gl.domElement.style.cursor = 'auto'
-      }}
-      {...props}
-    >
+    <group ref={group}>
+      <mesh
+        visible={false}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        onPointerOver={() => !state.current.dragging && setCursor('grab')}
+        onPointerOut={() => !state.current.dragging && setCursor('auto')}
+      >
+        <sphereGeometry args={[hitRadius, 12, 12]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
       {children}
     </group>
   )
