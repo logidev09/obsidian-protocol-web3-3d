@@ -1,118 +1,116 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import DragGroup from '../DragGroup'
 import { PALETTE, roundedBoxGeometry } from '../geo'
 
-/**
- * Perangkat vault — tampilan produk yang bisa "dibongkar".
- * Empat lapisan: sasis, papan logika, elemen aman, dan panel kaca.
- * Klik/tap objek → lapisan memisah (exploded view) dan label muncul.
- * Drag → memutar perangkat.
- */
-
 const LAYERS = [
-  { key: 'chassis', label: '01 · Titanium chassis', w: 2.4, h: 0.16, d: 1.5, y: -0.42, color: PALETTE.steel, spread: -0.75 },
-  { key: 'logic', label: '02 · Logic board', w: 2.1, h: 0.1, d: 1.25, y: -0.14, color: PALETTE.slate, spread: -0.25 },
-  { key: 'secure', label: '03 · Secure element', w: 0.72, h: 0.14, d: 0.72, y: 0.12, color: PALETTE.teal, spread: 0.3 },
-  { key: 'glass', label: '04 · Sapphire panel', w: 2.35, h: 0.07, d: 1.45, y: 0.42, color: PALETTE.mist, spread: 0.95 }
+  { id: 'shell', label: 'Titanium shell', y: 0.34, color: PALETTE.slate, emissive: PALETTE.steel },
+  { id: 'screen', label: 'Sapphire display', y: 0.17, color: PALETTE.ink, emissive: PALETTE.teal },
+  { id: 'secure', label: 'Secure element', y: 0.0, color: PALETTE.steel, emissive: PALETTE.indigo },
+  { id: 'battery', label: 'Solid-state cell', y: -0.17, color: PALETTE.slate, emissive: PALETTE.amber },
+  { id: 'base', label: 'Machined base', y: -0.34, color: PALETTE.ink, emissive: PALETTE.steel }
 ]
 
-function Layer({ layer, exploded, hovered, onHover, onOut, onClick }) {
-  const ref = useRef()
-  const geometry = useMemo(
-    () => roundedBoxGeometry(layer.w, layer.h, layer.d, 0.09),
-    [layer.w, layer.h, layer.d]
-  )
+/**
+ * Perangkat vault — lima lapis yang bisa "dibongkar".
+ * Drag untuk memutar; klik perangkat untuk memisahkan lapisan (exploded view);
+ * hover pada satu lapisan menyorotnya dan melaporkan namanya ke UI di luar canvas.
+ */
+export default function VaultDevice({ onLayerChange }) {
+  const [exploded, setExploded] = useState(false)
+  const [hover, setHover] = useState(null)
+  const spread = useRef(0)
+  const refs = useRef([])
+  const glow = useRef()
 
-  useFrame((state, delta) => {
-    const m = ref.current
-    if (!m) return
+  const geo = useMemo(() => roundedBoxGeometry(1.5, 0.14, 2.5, 0.28), [])
+  const secureGeo = useMemo(() => roundedBoxGeometry(0.9, 0.1, 0.9, 0.16), [])
+
+  useEffect(() => {
+    onLayerChange?.(hover)
+  }, [hover, onLayerChange])
+
+  useEffect(() => () => {
+    geo.dispose()
+    secureGeo.dispose()
+  }, [geo, secureGeo])
+
+  useFrame(({ clock }, delta) => {
     const dt = Math.min(delta, 0.05)
-    const t = state.clock.elapsedTime
+    const t = clock.elapsedTime
+    spread.current = THREE.MathUtils.damp(spread.current, exploded ? 1 : 0, 5, dt)
 
-    const targetY = layer.y + (exploded ? layer.spread : 0)
-    m.position.y = THREE.MathUtils.damp(m.position.y, targetY, 6, dt)
+    LAYERS.forEach((layer, i) => {
+      const mesh = refs.current[i]
+      if (!mesh) return
+      const lift = layer.y * (1 + spread.current * 2.6)
+      const isHot = hover === layer.id
+      mesh.position.y = THREE.MathUtils.damp(mesh.position.y, lift, 8, dt)
+      mesh.position.x = THREE.MathUtils.damp(mesh.position.x, isHot ? 0.14 : 0, 8, dt)
+      const targetScale = isHot ? 1.03 : 1
+      const s = THREE.MathUtils.damp(mesh.scale.x, targetScale, 8, dt)
+      mesh.scale.setScalar(s)
+      mesh.material.emissiveIntensity = THREE.MathUtils.damp(
+        mesh.material.emissiveIntensity,
+        isHot ? 0.9 : 0.22 + spread.current * 0.15,
+        6,
+        dt
+      )
+    })
 
-    const lift = hovered ? 0.06 : 0
-    m.position.z = THREE.MathUtils.damp(m.position.z, lift, 8, dt)
-
-    if (layer.key === 'secure') {
-      m.material.emissiveIntensity = 0.5 + Math.sin(t * 2.2) * 0.25 + (hovered ? 0.5 : 0)
-      m.rotation.y = THREE.MathUtils.damp(m.rotation.y, exploded ? t * 0.4 : 0, 3, dt)
+    if (glow.current) {
+      glow.current.material.opacity = 0.12 + Math.sin(t * 1.4) * 0.03 + spread.current * 0.1
+      glow.current.rotation.y = t * 0.12
     }
   })
 
-  const isGlass = layer.key === 'glass'
-
-  return (
-    <mesh
-      ref={ref}
-      geometry={geometry}
-      position={[0, layer.y, 0]}
-      onPointerOver={(e) => {
-        e.stopPropagation()
-        onHover(layer.key)
-      }}
-      onPointerOut={() => onOut(layer.key)}
-      onClick={(e) => {
-        e.stopPropagation()
-        onClick()
-      }}
-    >
-      <meshStandardMaterial
-        color={layer.color}
-        metalness={isGlass ? 0.2 : 0.9}
-        roughness={isGlass ? 0.08 : 0.32}
-        transparent={isGlass}
-        opacity={isGlass ? 0.35 : 1}
-        emissive={layer.key === 'secure' ? PALETTE.teal : PALETTE.void}
-        emissiveIntensity={layer.key === 'secure' ? 0.6 : 0}
-        flatShading={!isGlass}
-      />
-    </mesh>
-  )
-}
-
-export default function VaultDevice({ onExplodeChange }) {
-  const [exploded, setExploded] = useState(false)
-  const [hovered, setHovered] = useState(null)
-
-  const toggle = () => {
-    setExploded((v) => {
-      const next = !v
-      onExplodeChange?.(next)
-      return next
-    })
-  }
-
   return (
     <>
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[3, 6, 4]} intensity={1.2} color={PALETTE.mist} />
-      <directionalLight position={[-4, 2, -3]} intensity={0.5} color={PALETTE.indigo} />
-      <pointLight position={[0, 1.5, 2.5]} intensity={7} color={PALETTE.teal} distance={10} />
+      <ambientLight intensity={0.45} />
+      <directionalLight position={[3, 6, 4]} intensity={1.5} color={PALETTE.mist} />
+      <pointLight position={[-3, 1, 3]} intensity={10} color={PALETTE.teal} distance={12} />
+      <pointLight position={[3, -2, -2]} intensity={8} color={PALETTE.indigo} distance={12} />
 
-      <DragGroup autoSpin={0.35} parallax={0.5} scale={1.1}>
-        {LAYERS.map((layer) => (
-          <Layer
-            key={layer.key}
-            layer={layer}
-            exploded={exploded}
-            hovered={hovered === layer.key}
-            onHover={setHovered}
-            onOut={(k) => setHovered((cur) => (cur === k ? null : cur))}
-            onClick={toggle}
-          />
-        ))}
+      <DragGroup autoSpin={0.24} parallax={0.75} scale={1.05}>
+        <group
+          onClick={(e) => {
+            e.stopPropagation()
+            setExploded((v) => !v)
+          }}
+          onPointerOut={() => setHover(null)}
+        >
+          {LAYERS.map((layer, i) => (
+            <mesh
+              key={layer.id}
+              ref={(el) => (refs.current[i] = el)}
+              geometry={layer.id === 'secure' ? secureGeo : geo}
+              position={[0, layer.y, 0]}
+              onPointerOver={(e) => {
+                e.stopPropagation()
+                setHover(layer.id)
+              }}
+            >
+              <meshStandardMaterial
+                color={layer.color}
+                emissive={layer.emissive}
+                emissiveIntensity={0.22}
+                metalness={0.9}
+                roughness={layer.id === 'screen' ? 0.12 : 0.36}
+                flatShading={layer.id === 'secure'}
+              />
+            </mesh>
+          ))}
 
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.35, 0]}>
-          <ringGeometry args={[1.55, 1.62, 6]} />
-          <meshBasicMaterial color={PALETTE.amber} transparent opacity={0.4} />
-        </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, Math.PI / 6]} position={[0, -1.36, 0]}>
-          <ringGeometry args={[1.9, 1.93, 6]} />
-          <meshBasicMaterial color={PALETTE.steel} transparent opacity={0.25} />
+          <mesh position={[0, 0.245, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[1.16, 2.0]} />
+            <meshBasicMaterial color={PALETTE.teal} transparent opacity={0.07} />
+          </mesh>
+        </group>
+
+        <mesh ref={glow} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]}>
+          <ringGeometry args={[1.5, 2.4, 6]} />
+          <meshBasicMaterial color={PALETTE.indigo} transparent opacity={0.12} side={THREE.DoubleSide} />
         </mesh>
       </DragGroup>
     </>
