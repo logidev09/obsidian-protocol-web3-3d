@@ -1,44 +1,22 @@
 import * as THREE from 'three'
 
 /**
- * Palet.
- *
- * Cyberpunk tanpa norak: dasar biru-abu sangat gelap, aksen desaturasi
- * (teal keabuan, indigo lembut, amber pucat). Tidak ada magenta/hijau neon
- * jenuh — saturasi ditahan di bawah ~55% supaya terbaca mahal, bukan arcade.
+ * Palet — sengaja diredam.
+ * Dasarnya abu-abu kebiruan dingin; aksen teal/indigo dipakai tipis,
+ * amber hanya untuk sinyal kecil. Tidak ada neon jenuh (#00ffff, #ff00ff).
  */
 export const PALETTE = {
-  ink: '#06080b',
-  slate: '#161c24',
-  steel: '#2e3a45',
+  void: '#06080b',
+  slate: '#161d25',
+  steel: '#2b3540',
   mist: '#c3ccd6',
-  teal: '#4fd2c2',
-  indigo: '#6b7dd6',
-  amber: '#d8a15a'
+  teal: '#4d9e93',
+  indigo: '#5a67a8',
+  amber: '#b8934a',
+  rose: '#a8616b'
 }
 
-/** Kualitas render menyesuaikan perangkat — dipanggil sekali, hasilnya dipakai semua scene. */
-let cached = null
-export function getPerfProfile() {
-  if (cached) return cached
-  if (typeof window === 'undefined') {
-    cached = { dpr: [1, 1.5], particles: 1, low: false, reduced: false }
-    return cached
-  }
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const cores = navigator.hardwareConcurrency || 4
-  const narrow = window.innerWidth < 820
-  const low = narrow || cores <= 4
-  cached = {
-    dpr: low ? [1, 1.4] : [1, 1.9],
-    particles: low ? 0.5 : 1,
-    low,
-    reduced
-  }
-  return cached
-}
-
-/** PRNG deterministik — layout partikel identik di tiap reload. */
+/** PRNG deterministik — supaya komposisi acak selalu sama tiap reload. */
 export function seededRandom(seed = 1) {
   let s = seed >>> 0 || 1
   return () => {
@@ -49,47 +27,81 @@ export function seededRandom(seed = 1) {
   }
 }
 
-/**
- * Balok bersudut tumpul, dibangun dari extrude Shape.
- * Dipakai untuk badan perangkat — memberi siluet CNC tanpa perlu file model.
- */
-export function roundedBoxGeometry(width, height, depth, radius) {
-  const w = width / 2
-  const d = depth / 2
-  const r = Math.min(radius, w, d)
-  const shape = new THREE.Shape()
-  shape.moveTo(-w + r, -d)
-  shape.lineTo(w - r, -d)
-  shape.quadraticCurveTo(w, -d, w, -d + r)
-  shape.lineTo(w, d - r)
-  shape.quadraticCurveTo(w, d, w - r, d)
-  shape.lineTo(-w + r, d)
-  shape.quadraticCurveTo(-w, d, -w, d - r)
-  shape.lineTo(-w, -d + r)
-  shape.quadraticCurveTo(-w, -d, -w + r, -d)
+let cachedProfile = null
 
+/**
+ * Profil performa kasar. Dipakai untuk menurunkan jumlah partikel & DPR
+ * di perangkat lemah supaya scroll tetap halus.
+ */
+export function getPerfProfile() {
+  if (cachedProfile) return cachedProfile
+  if (typeof window === 'undefined') {
+    cachedProfile = { low: false, dpr: [1, 1.6] }
+    return cachedProfile
+  }
+  const cores = navigator.hardwareConcurrency || 4
+  const mem = navigator.deviceMemory || 4
+  const mobile = window.matchMedia('(max-width: 820px)').matches
+  const low = cores <= 4 || mem <= 4 || mobile
+  cachedProfile = { low, mobile, dpr: low ? [1, 1.35] : [1, 1.75] }
+  return cachedProfile
+}
+
+export function prefersReducedMotion() {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** Rounded-rect 2D untuk di-extrude jadi bodi perangkat. */
+function roundedRectShape(width, height, radius) {
+  const w = width / 2
+  const h = height / 2
+  const r = Math.min(radius, w, h)
+  const shape = new THREE.Shape()
+  shape.moveTo(-w + r, -h)
+  shape.lineTo(w - r, -h)
+  shape.absarc(w - r, -h + r, r, -Math.PI / 2, 0, false)
+  shape.lineTo(w, h - r)
+  shape.absarc(w - r, h - r, r, 0, Math.PI / 2, false)
+  shape.lineTo(-w + r, h)
+  shape.absarc(-w + r, h - r, r, Math.PI / 2, Math.PI, false)
+  shape.lineTo(-w, -h + r)
+  shape.absarc(-w + r, -h + r, r, Math.PI, Math.PI * 1.5, false)
+  return shape
+}
+
+/**
+ * Balok bersudut tumpul tanpa dependensi tambahan.
+ * Dibangun dari extrude + bevel, lalu diputar supaya tebalnya di sumbu Y.
+ */
+export function roundedBoxGeometry(width, height, depth, radius = 0.15) {
+  const bevel = Math.min(height / 2.2, radius * 0.55)
+  const shape = roundedRectShape(width, depth, radius)
   const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: height,
+    depth: Math.max(height - bevel * 2, 0.01),
     bevelEnabled: true,
-    bevelThickness: height * 0.18,
-    bevelSize: height * 0.16,
-    bevelSegments: 2,
+    bevelSize: bevel,
+    bevelThickness: bevel,
+    bevelSegments: 3,
     curveSegments: 6
   })
-  geo.rotateX(-Math.PI / 2)
   geo.center()
+  geo.rotateX(-Math.PI / 2)
+  geo.computeVertexNormals()
   return geo
 }
 
-/** Titik-titik pada bola (distribusi Fibonacci) — dasar mesh jaringan. */
+/** Distribusi titik merata di permukaan bola (spiral Fibonacci). */
 export function fibonacciSphere(count, radius = 1) {
-  const pts = []
+  const points = []
   const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const y = 1 - (i / (count - 1)) * 2
-    const r = Math.sqrt(Math.max(0, 1 - y * y))
+    const y = 1 - (i / Math.max(count - 1, 1)) * 2
+    const r = Math.sqrt(Math.max(1 - y * y, 0))
     const theta = golden * i
-    pts.push(new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius))
+    points.push(
+      new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
+    )
   }
-  return pts
+  return points
 }
