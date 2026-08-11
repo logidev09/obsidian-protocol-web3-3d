@@ -5,31 +5,31 @@ import DragGroup from '../DragGroup'
 import { PALETTE, fibonacciSphere } from '../geo'
 
 /**
- * Network: mesh validator berbentuk bola.
- * - Node terdekat saling terhubung garis (dihitung sekali, bukan tiap frame)
- * - Klik node → node terkunci menyala dan mengirim "pulsa" ke tetangganya
- * - Drag → memutar seluruh jaringan
+ * Network: bola node yang saling terhubung.
+ * - Drag memutar seluruh jaringan.
+ * - Hover pada satu node menyalakan node itu dan menebalkan garis sekitarnya.
+ * Semua garis digambar sebagai satu LineSegments -> satu draw call.
  */
 
 const NODE_COUNT = 42
 const LINK_DISTANCE = 1.15
 
-function Node({ position, index, active, onSelect }) {
+function Node({ position, index, active, setActive }) {
   const ref = useRef()
-  const [hovered, setHovered] = useState(false)
+  const isActive = active === index
 
-  useFrame((frame, delta) => {
+  useFrame((state, delta) => {
     const m = ref.current
     if (!m) return
     const dt = Math.min(delta, 0.05)
-    const t = frame.clock.elapsedTime
-    const base = active ? 1.9 : hovered ? 1.5 : 1
-    const breathe = 1 + Math.sin(t * 1.6 + index) * 0.06
-    m.scale.setScalar(THREE.MathUtils.damp(m.scale.x, base * breathe, 7, dt))
+    const t = state.clock.elapsedTime
+    const target = isActive ? 1.9 : 1
+    const s = THREE.MathUtils.damp(m.scale.x, target, 6, dt)
+    m.scale.setScalar(s)
     m.material.emissiveIntensity = THREE.MathUtils.damp(
       m.material.emissiveIntensity,
-      active ? 1.6 : hovered ? 0.9 : 0.25,
-      7,
+      isActive ? 2.2 : 0.4 + Math.sin(t * 1.2 + index) * 0.12,
+      6,
       dt
     )
   })
@@ -38,78 +38,18 @@ function Node({ position, index, active, onSelect }) {
     <mesh
       ref={ref}
       position={position}
-      onPointerOver={(e) => {
-        e.stopPropagation()
-        setHovered(true)
-      }}
-      onPointerOut={() => setHovered(false)}
-      onClick={(e) => {
-        e.stopPropagation()
-        onSelect(index)
-      }}
+      onPointerOver={(e) => { e.stopPropagation(); setActive(index) }}
+      onPointerOut={(e) => { e.stopPropagation(); setActive(null) }}
     >
       <octahedronGeometry args={[0.075, 0]} />
       <meshStandardMaterial
-        color={active ? PALETTE.teal : PALETTE.mist}
-        emissive={active ? PALETTE.teal : PALETTE.indigo}
-        emissiveIntensity={0.25}
+        color={isActive ? PALETTE.amber : PALETTE.mist}
+        emissive={isActive ? PALETTE.amber : PALETTE.teal}
+        emissiveIntensity={0.4}
         roughness={0.3}
-        metalness={0.7}
+        metalness={0.6}
         flatShading
       />
-    </mesh>
-  )
-}
-
-function Links({ nodes, pairs, activeIndex }) {
-  const ref = useRef()
-
-  const geometry = useMemo(() => {
-    const positions = new Float32Array(pairs.length * 6)
-    pairs.forEach(([a, b], i) => {
-      nodes[a].toArray(positions, i * 6)
-      nodes[b].toArray(positions, i * 6 + 3)
-    })
-    const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    return g
-  }, [nodes, pairs])
-
-  useFrame((frame, delta) => {
-    if (!ref.current) return
-    const target = activeIndex === null ? 0.16 : 0.3
-    ref.current.material.opacity = THREE.MathUtils.damp(
-      ref.current.material.opacity,
-      target,
-      5,
-      Math.min(delta, 0.05)
-    )
-  })
-
-  return (
-    <lineSegments ref={ref} geometry={geometry}>
-      <lineBasicMaterial color={PALETTE.steel} transparent opacity={0.16} />
-    </lineSegments>
-  )
-}
-
-function Pulse({ from, to }) {
-  const ref = useRef()
-  const progress = useRef(0)
-
-  useFrame((_, delta) => {
-    if (!ref.current) return
-    progress.current = (progress.current + delta * 0.8) % 1
-    ref.current.position.lerpVectors(from, to, progress.current)
-    const fade = Math.sin(progress.current * Math.PI)
-    ref.current.material.opacity = fade
-    ref.current.scale.setScalar(0.5 + fade * 0.8)
-  })
-
-  return (
-    <mesh ref={ref}>
-      <sphereGeometry args={[0.045, 8, 8]} />
-      <meshBasicMaterial color={PALETTE.teal} transparent opacity={0} toneMapped={false} />
     </mesh>
   )
 }
@@ -117,44 +57,75 @@ function Pulse({ from, to }) {
 export default function NetworkMesh() {
   const [active, setActive] = useState(null)
 
-  const nodes = useMemo(() => fibonacciSphere(NODE_COUNT, 2.1), [])
+  const nodes = useMemo(() => fibonacciSphere(NODE_COUNT, 1.75), [])
 
-  const pairs = useMemo(() => {
-    const list = []
+  const { geometry, pairs } = useMemo(() => {
+    const positions = []
+    const pairs = []
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
-        if (nodes[i].distanceTo(nodes[j]) < LINK_DISTANCE) list.push([i, j])
+        if (nodes[i].distanceTo(nodes[j]) < LINK_DISTANCE) {
+          positions.push(nodes[i].x, nodes[i].y, nodes[i].z, nodes[j].x, nodes[j].y, nodes[j].z)
+          pairs.push([i, j])
+        }
       }
     }
-    return list
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+
+    const colors = new Float32Array(positions.length)
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return { geometry: geo, pairs }
   }, [nodes])
 
-  const pulses = useMemo(() => {
-    if (active === null) return []
-    return pairs
-      .filter(([a, b]) => a === active || b === active)
-      .slice(0, 6)
-      .map(([a, b]) => (a === active ? [nodes[a], nodes[b]] : [nodes[b], nodes[a]]))
-  }, [active, pairs, nodes])
+  const lines = useRef()
+
+  useFrame((state, delta) => {
+    const geo = lines.current?.geometry
+    if (!geo) return
+    const dt = Math.min(delta, 0.05)
+    const attr = geo.attributes.color
+    const base = new THREE.Color(PALETTE.indigo)
+    const hot = new THREE.Color(PALETTE.amber)
+    const t = state.clock.elapsedTime
+
+    for (let p = 0; p < pairs.length; p++) {
+      const [i, j] = pairs[p]
+      const isHot = active !== null && (i === active || j === active)
+      const pulse = 0.55 + Math.sin(t * 0.8 + p * 0.4) * 0.12
+      const target = isHot ? hot : base
+      const intensity = isHot ? 1 : pulse
+      for (let v = 0; v < 2; v++) {
+        const idx = p * 2 + v
+        attr.setXYZ(
+          idx,
+          THREE.MathUtils.damp(attr.getX(idx), target.r * intensity, 8, dt),
+          THREE.MathUtils.damp(attr.getY(idx), target.g * intensity, 8, dt),
+          THREE.MathUtils.damp(attr.getZ(idx), target.b * intensity, 8, dt)
+        )
+      }
+    }
+    attr.needsUpdate = true
+  })
 
   return (
     <>
-      <ambientLight intensity={0.55} />
+      <ambientLight intensity={0.6} />
       <directionalLight position={[3, 4, 5]} intensity={0.9} color={PALETTE.mist} />
-      <pointLight position={[-4, 2, 3]} intensity={16} color={PALETTE.indigo} distance={14} />
+      <pointLight position={[0, 0, 0]} intensity={6} color={PALETTE.teal} distance={6} />
 
-      <DragGroup autoSpin={0.85} parallax={0.45}>
-        <Links nodes={nodes} pairs={pairs} activeIndex={active} />
+      <DragGroup autoSpin={0.8} parallax={0.5}>
+        <lineSegments ref={lines} geometry={geometry}>
+          <lineBasicMaterial vertexColors transparent opacity={0.75} />
+        </lineSegments>
+
         {nodes.map((p, i) => (
-          <Node key={i} index={i} position={p} active={active === i} onSelect={setActive} />
-        ))}
-        {pulses.map(([from, to], i) => (
-          <Pulse key={`${active}-${i}`} from={from} to={to} />
+          <Node key={i} index={i} position={p} active={active} setActive={setActive} />
         ))}
 
         <mesh>
-          <icosahedronGeometry args={[2.08, 1]} />
-          <meshBasicMaterial color={PALETTE.slate} transparent opacity={0.07} wireframe />
+          <icosahedronGeometry args={[1.72, 1]} />
+          <meshBasicMaterial color={PALETTE.slate} wireframe transparent opacity={0.08} />
         </mesh>
       </DragGroup>
     </>

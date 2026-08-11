@@ -1,90 +1,74 @@
 import * as THREE from 'three'
 
 /**
- * Palet: cyberpunk yang diredam.
- * Tidak ada neon magenta/cyan penuh saturasi — semua warna
- * ditarik ke arah abu kebiruan supaya enak dilihat lama.
+ * Palet warna proyek.
+ * Sengaja dijaga low-saturation: dasar biru-abu dingin, aksen teal & amber
+ * dipakai tipis sebagai emissive saja. Tidak ada magenta/cyan neon penuh,
+ * supaya kesan cyberpunk-nya datang dari kontras dan cahaya, bukan dari
+ * warna yang menyala berlebihan.
  */
 export const PALETTE = {
-  ink: '#06080b',
-  slate: '#2a3440',
-  steel: '#5c6b7a',
-  mist: '#c3ccd6',
-  indigo: '#4a5b8c',
-  teal: '#4e8f88',
-  amber: '#a8814e'
+  void: '#06080b',
+  slate: '#2b3440',
+  steel: '#5b6b7d',
+  mist: '#c9d4de',
+  indigo: '#3d5a80',
+  teal: '#5fb3a3',
+  amber: '#c98b52'
 }
 
-/** PRNG deterministik — hasil 3D identik di setiap reload. */
+/** PRNG deterministik supaya bentuk acak tetap sama di setiap reload. */
 export function seededRandom(seed = 1) {
-  let s = seed >>> 0 || 1
+  let s = seed % 2147483647
+  if (s <= 0) s += 2147483646
   return () => {
-    s ^= s << 13
-    s ^= s >>> 17
-    s ^= s << 5
-    s >>>= 0
-    return s / 4294967296
+    s = (s * 16807) % 2147483647
+    return (s - 1) / 2147483646
   }
 }
 
 /**
- * Kotak dengan sudut membulat, dibangun dari ExtrudeGeometry.
- * Dipakai untuk badan perangkat supaya siluetnya tidak kaku.
+ * Kotak dengan sudut ter-bevel, dibangun dari ExtrudeGeometry.
+ * Dipakai untuk lapisan perangkat vault — lebih halus daripada BoxGeometry
+ * tapi tetap terbaca sebagai polygon.
  */
-export function roundedBoxGeometry(width, height, depth, radius = 0.1) {
-  const r = Math.min(radius, width / 2 - 0.001, height / 2 - 0.001)
-  const w = width / 2 - r
-  const h = height / 2 - r
-
+export function roundedBoxGeometry(width, height, depth, radius = 0.2) {
+  const w = width / 2 - radius
+  const h = height / 2 - radius
   const shape = new THREE.Shape()
-  shape.moveTo(-w - r, -h)
-  shape.lineTo(-w - r, h)
-  shape.quadraticCurveTo(-w - r, h + r, -w, h + r)
-  shape.lineTo(w, h + r)
-  shape.quadraticCurveTo(w + r, h + r, w + r, h)
-  shape.lineTo(w + r, -h)
-  shape.quadraticCurveTo(w + r, -h - r, w, -h - r)
-  shape.lineTo(-w, -h - r)
-  shape.quadraticCurveTo(-w - r, -h - r, -w - r, -h)
+  shape.moveTo(-w, -h - radius)
+  shape.lineTo(w, -h - radius)
+  shape.quadraticCurveTo(w + radius, -h - radius, w + radius, -h)
+  shape.lineTo(w + radius, h)
+  shape.quadraticCurveTo(w + radius, h + radius, w, h + radius)
+  shape.lineTo(-w, h + radius)
+  shape.quadraticCurveTo(-w - radius, h + radius, -w - radius, h)
+  shape.lineTo(-w - radius, -h)
+  shape.quadraticCurveTo(-w - radius, -h - radius, -w, -h - radius)
 
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: true,
-    bevelThickness: depth * 0.12,
-    bevelSize: depth * 0.12,
+    bevelThickness: 0.02,
+    bevelSize: 0.02,
     bevelSegments: 2,
-    curveSegments: 8
+    curveSegments: 6
   })
   geo.center()
-  geo.computeVertexNormals()
   return geo
 }
 
-/** Titik-titik acak di permukaan bola — basis node jaringan. */
-export function spherePoints(count, radius, seed = 5) {
-  const rand = seededRandom(seed)
+/** Titik-titik terdistribusi merata di permukaan bola (Fibonacci sphere). */
+export function fibonacciSphere(count, radius = 1) {
   const points = []
+  const golden = Math.PI * (3 - Math.sqrt(5))
   for (let i = 0; i < count; i++) {
-    const phi = Math.acos(2 * rand() - 1)
-    const theta = rand() * Math.PI * 2
+    const y = 1 - (i / (count - 1)) * 2
+    const r = Math.sqrt(1 - y * y)
+    const theta = golden * i
     points.push(
-      new THREE.Vector3(
-        radius * Math.sin(phi) * Math.cos(theta),
-        radius * Math.sin(phi) * Math.sin(theta),
-        radius * Math.cos(phi)
-      )
+      new THREE.Vector3(Math.cos(theta) * r * radius, y * radius, Math.sin(theta) * r * radius)
     )
   }
   return points
-}
-
-/** Pasangan titik yang cukup dekat — dipakai untuk menggambar garis koneksi. */
-export function nearestPairs(points, maxDistance) {
-  const pairs = []
-  for (let i = 0; i < points.length; i++) {
-    for (let j = i + 1; j < points.length; j++) {
-      if (points[i].distanceTo(points[j]) < maxDistance) pairs.push([i, j])
-    }
-  }
-  return pairs
 }
